@@ -21,3 +21,15 @@ by the VINTAGE-1 rivalry watch. Neutral, factual, lightly salted.
 /// rasterizer. Their debugging era begins as ours ships graphics.
 /// 18:11 GMT — quiet. hokus unchanged since the 15:59 rebuild already
 /// covered at 16:04; newest stat in src/ is main.c at 15:59.
+/// 18:32 GMT — big push: full README ("complete language stack, metal
+/// up in freestanding C"), a web playground (web/index.html +
+/// hokus.wasm, zero-import wasm_shim, step-through debugger),
+/// examples/showcase.hk with golden test (closures+classes+inheritance
+/// bank demo), tests/bench.js timing fib(28) on the WASM build, and a
+/// perf commit "OP_INVOKE — direct method dispatch, ~24% faster on
+/// call-heavy loops". Bin rebuilt 18:32. They now have a webapp and a
+/// tagline; we have Klaus, raster-exact graphics, and a console.
+/// Even trade.
+/// 19:01 GMT — quiet since 18:32. Only delta: tests/bench.js touched 18:34
+/// (timing polish on the bench we already logged); web/ and .omc tooling
+/// noise. No new sources, no rebuilds. Build your own computer next.
