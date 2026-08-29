@@ -236,10 +236,6 @@ struct Parser {
 }
 
 impl Parser {
-    fn peek(&self) -> Option<&Tok> {
-        self.toks.get(self.pos)
-    }
-
     fn bin(&mut self, level: u8) -> Option<Expr> {
         if level == 6 {
             return self.unary();
@@ -697,7 +693,7 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
     let mut segments: Vec<(u16, Vec<u8>)> = Vec::new();
     for (addr, rec) in recs {
         let mut a = addr as usize;
-        let mut put = |a: usize, b: u8, segments: &mut Vec<(u16, Vec<u8>)>| {
+        let put = |a: usize, b: u8, segments: &mut Vec<(u16, Vec<u8>)>| {
             if let Some(last) = segments.last_mut() {
                 if usize::from(last.0) + last.1.len() == a {
                     last.1.push(b);
@@ -738,33 +734,29 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                 expr,
             } => {
                 // `encode` was validated in pass 1, so this cannot fail.
-                put(a, encode(op, mode).unwrap(), &mut segments);
-                a += 1;
-                let operand = |a: usize| -> Result<i32, Error> {
-                    resolve(expr.as_ref().unwrap(), &syms, a as u32).ok_or_else(|| {
-                        err(line, "undefined symbol or unresolvable expression")
-                    })
+                put(addr as usize, encode(op, mode).unwrap(), &mut segments);
+                let operand_at = addr as usize + 1;
+                let operand = || -> Result<i32, Error> {
+                    resolve(expr.as_ref().unwrap(), &syms, addr)
+                        .ok_or_else(|| err(line, "undefined symbol or unresolvable expression"))
                 };
                 match mode {
                     Mode::Imp | Mode::Acc => {}
                     Mode::Imm | Mode::Zp | Mode::Zpx | Mode::Zpy | Mode::Izx | Mode::Izy => {
-                        put(a, operand(a)? as u8, &mut segments);
-                        a += 1;
+                        put(operand_at, operand()? as u8, &mut segments);
                     }
                     Mode::Abs | Mode::Abx | Mode::Aby | Mode::Ind => {
-                        let v = operand(a)?;
-                        put(a, v as u8, &mut segments);
-                        put(a + 1, (v >> 8) as u8, &mut segments);
-                        a += 2;
+                        let v = operand()?;
+                        put(operand_at, v as u8, &mut segments);
+                        put(operand_at + 1, (v >> 8) as u8, &mut segments);
                     }
                     Mode::Rel => {
-                        let target = operand(a)?;
+                        let target = operand()?;
                         let off = target - (addr as i32 + 2);
                         if !(-128..=127).contains(&off) {
                             return Err(err(line, "branch target out of range"));
                         }
-                        put(a, off as u8, &mut segments);
-                        a += 1;
+                        put(operand_at, off as u8, &mut segments);
                     }
                 }
             }
