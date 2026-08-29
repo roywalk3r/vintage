@@ -1,0 +1,13 @@
+[package]
+name = "vintage"
+version = "0.1.0"
+edition = "2024"
+description = "VINTAGE-1 — a fantasy 8-bit home computer: 6502 core, assembler, machine model, and web console"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
