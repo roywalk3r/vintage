@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VINTAGE-1 Console</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="shell">
+      <header>
+        <h1>VINTAGE-1</h1>
+        <p class="tag">8-bit home computer &middot; NMOS 6502 @ 1.02 MHz</p>
+      </header>
+      <main>
+        <div id="tv">
+          <canvas id="screen" width="256" height="192"></canvas>
+          <div id="crt"></div>
+        </div>
+        <aside id="panel">
+          <section>
+            <h2>ROM</h2>
+            <div id="roms"></div>
+            <label id="file-well">load .vin&hellip;<input id="file" type="file" accept=".vin" /></label>
+          </section>
+          <section>
+            <h2>CPU</h2>
+            <pre id="cpu"></pre>
+            <div class="btns">
+              <button id="run">pause</button>
+            </div>
+            <div class="btns">
+              <button id="step">step instr</button>
+              <button id="frame">step frame</button>
+            </div>
+          </section>
+          <section>
+            <h2>Cycle budget</h2>
+            <input id="budget" type="range" min="10" max="100" value="100" />
+            <pre id="hint">100% = full speed</pre>
+          </section>
+        </aside>
+      </main>
+      <footer>
+        <p>sixteen kilobytes of RAM, one megahertz of joy &middot; keyboard: arrows / wasd</p>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

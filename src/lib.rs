@@ -6,3 +6,4 @@ pub mod cpu;
 pub mod dis;
 pub mod isa;
 pub mod machine;
+pub mod wasm;
