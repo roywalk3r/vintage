@@ -102,8 +102,7 @@ fn edge_run(k: usize, step: usize) -> Vec<(usize, usize)> {
 #[test]
 fn cube_per_edge() {
     for step in [0usize, 5, 12, 20, 31] {
-        for k in 0..12usize {
-            let (a, b) = EDGES[k];
+        for (k, &(a, b)) in EDGES.iter().enumerate() {
             let drawn = edge_run(k, step);
             let rom_tbl = tbl_bytes();
             let base = step * 16;

@@ -148,7 +148,7 @@ mod tests {
                 panic!("{opcode:#04x} failed to disassemble");
             };
             assert_eq!(
-                u8::from(instruction_len(mode)),
+                instruction_len(mode),
                 len,
                 "{opcode:#04x} wrong length"
             );

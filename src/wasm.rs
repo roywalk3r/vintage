@@ -46,6 +46,8 @@ pub extern "C" fn vin_reset() {
 
 /// Load a raw 8K ROM image (caller must pass exactly 0x2000 bytes).
 #[unsafe(no_mangle)]
+// Clippy can't see the JS-side invariant that `ptr` is a live heap slice.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn vin_load_rom(ptr: *const u8, len: usize) {
     if ptr.is_null() || len != 0x2000 {
         return;

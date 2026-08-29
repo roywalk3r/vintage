@@ -694,11 +694,12 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
     for (addr, rec) in recs {
         let mut a = addr as usize;
         let put = |a: usize, b: u8, segments: &mut Vec<(u16, Vec<u8>)>| {
-            if let Some(last) = segments.last_mut() {
-                if usize::from(last.0) + last.1.len() == a {
-                    last.1.push(b);
-                    return;
-                }
+            if let Some(last) = segments
+                .last_mut()
+                .filter(|last| usize::from(last.0) + last.1.len() == a)
+            {
+                last.1.push(b);
+                return;
             }
             segments.push((a as u16, vec![b]));
         };
