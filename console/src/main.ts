@@ -26,6 +26,7 @@ function parseVin(buf: ArrayBuffer): Vin {
 const KEYMAP: Record<string, number> = {
   ArrowUp: 0x11, ArrowDown: 0x12, ArrowLeft: 0x13, ArrowRight: 0x14,
   w: 0x11, s: 0x12, a: 0x13, d: 0x14,
+  "+": 0x15, "=": 0x15, "-": 0x16, "_": 0x16,
 };
 
 interface VintageApi {
