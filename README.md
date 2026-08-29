@@ -61,7 +61,7 @@ Prereqs: Rust (stable + wasm32-unknown-unknown), node ≥ 18.
 
 ```bash
 # CLI + emulator toolchain
-cargo test                       # 66 unit + 11 integration tests, Klaus gate included
+cargo test                       # 79 tests (unit + integration), Klaus gate included
 cargo run -- cube.s --frames 120 # run a demo for 2 seconds, PPM to stdout
 cargo run -- asm software/cube.s -o cube.vin
 cargo run -- disasm cube.vin

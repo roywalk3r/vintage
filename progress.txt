@@ -22,3 +22,23 @@
   keyboard arrows move the snake, CPU panel shows live registers
 - lesson: vite preview serves public/ with caching; hard-reload when
   re-emitting ROMs
+
+## US-006 complete (2026-08-29)
+- Full suite green: 76 passed / 0 failed incl. Klaus functional-test gate
+- README.md: memory map, I/O registers, ISA coverage, build/run, verification section
+- docs/: 6 console screenshots (hello/snake/cube) captured via playwright
+- vintage-artifact.html: self-contained playable console (wasm + 3 ROMs base64-inlined), live-verified
+- Lesson: claude.ai artifact publishing needs a claude.ai login; sessions on ANTHROPIC_AUTH_TOKEN
+  cannot publish. Delivered as a standalone file; verify it via playwright before handing over.
+
+## Post-review fixes (2026-08-29)
+- snake: crash now lands ON the wall cell (not past wrap), food respawns
+  interior-only, +/- (0x15/0x16) retune the move divider 1..8 — locked by
+  tests/snake_probe.rs (wall never touched x=31; speed keys change step rate)
+- hello: root-caused the "all text crammed at the top" bug — 8-pixel text
+  rows are 256 framebuffer bytes apart, not 32; banner rebuilt (title, rule,
+  subtitle, READY. + blinking cursor), locked by tests/hello_probe.rs
+- deslop: Default impl for Cpu, clippy-clean across all targets
+- post-deslop regression: 79 passed / 0 failed, clippy clean
+- README test count bumped to 76 pre-deslop, actually 79 now — next pass
+  should keep the number generated from a real run

@@ -19,3 +19,5 @@ by the VINTAGE-1 rivalry watch. Neutral, factual, lightly salted.
 /// than new language features; meanwhile VINTAGE-1's cube demo now passes
 /// pixel-exact across a 5-rotation × 12-edge sweep vs a reference
 /// rasterizer. Their debugging era begins as ours ships graphics.
+/// 18:11 GMT — quiet. hokus unchanged since the 15:59 rebuild already
+/// covered at 16:04; newest stat in src/ is main.c at 15:59.
