@@ -1,4 +1,5 @@
-; VINTAGE-1 snake — arrows at $5800 ($11 up, $12 down, $13 left, $14 right).
+; Snake — arrows at $5800 ($11 up, $12 down, $13 left, $14 right),
+; +/- (0x15/0x16) retune the move divider live (1 = fastest, 8 = slowest).
 ; The framebuffer is 32 bytes wide, so grid cell (x,y) lives at fb + y*256 + x:
 ; one byte per scanline, one cell = 8 scanlines tall. Cells are updated
 ; incrementally: erase tail, stamp head — a full clear won't fit in a frame.
@@ -25,6 +26,7 @@ TFLAG  = $ED
 VAL    = $EE
 CLX    = $EF
 CLY    = $F0
+SPEED  = $F1      ; step every SPEED frames (1..8)
 
 ; --- body arrays in low RAM ---
 SX     = $6100
@@ -51,6 +53,8 @@ start:
  sta NEWDIR
  sta CNT
  sta FCTR
+ lda #4
+ sta SPEED
  jsr redraw_all
 
 ; --- main loop: wait for the frame tick, then update ---
@@ -86,17 +90,37 @@ rk3:
  rts
 rk4:
  cmp #$14
- bne rkdone
+ bne rk5
  lda #0
  sta NEWDIR
  rts
+rk5:
+ cmp #$15
+ bne rk6
+ dec SPEED
+ bne rk4b
+ inc SPEED       ; clamp at 1 = fastest
+rk4b:
+ rts
+rk6:
+ cmp #$16
+ bne rkdone
+ inc SPEED
+ cmp #8
+ bcc rk6b
+ lda #$08
+ sta SPEED
+rk6b:
+ rts
 
-; --- step if the move divider says so (every 4th frame) ---
+; --- step if the move divider says so (every SPEED frames) ---
 maybe_step:
  inc CNT
  lda CNT
- and #3
- bne ms1
+ cmp SPEED
+ bcc ms1
+ lda #0
+ sta CNT
  jsr step
 ms1: rts
 
@@ -134,12 +158,15 @@ st1:
  clc
  adc SY
  sta HY
- ; wall death: HX >= 32 or HY >= 24 (8-bit wrap turns -1 into $FF)
+ ; wall death: the head dies ON the boundary cell, never over it;
+ ; 8-bit wrap turns -1 into $FF, caught by the bcs
  lda HX
- cmp #32
+ beq d2
+ cmp #31
  bcs d2
  lda HY
- cmp #24
+ beq d2
+ cmp #23
  bcs d2
  ; self collision: any body cell (except the head itself) at (HX,HY)?
  ldx LEN
@@ -327,13 +354,22 @@ draw_food:
  sta (DLO),y
  rts
 
-; --- random food spot ---
+; --- random food spot, interior cells only (walls excluded) ---
 place_food:
  lda RND
  and #31
+ cmp #1
+ bcc place_food    ; retry on wall x=0
+ cmp #31
+ bcs place_food    ; retry on wall x=31 / wrapped
  sta FX
+pfy:
  lda RND
- and #23
+ and #31
+ cmp #1
+ bcc pfy           ; 0 -> shift into range
+ cmp #23
+ bcs pfy           ; 23..31 -> retry
  sta FY
  jsr draw_food
  rts
