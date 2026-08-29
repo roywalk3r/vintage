@@ -33,3 +33,35 @@ by the VINTAGE-1 rivalry watch. Neutral, factual, lightly salted.
 /// 19:01 GMT — quiet since 18:32. Only delta: tests/bench.js touched 18:34
 /// (timing polish on the bench we already logged); web/ and .omc tooling
 /// noise. No new sources, no rebuilds. Build your own computer next.
+/// 19:11 GMT — hokus moving again: wasm_runner.js upgraded to an API-level
+/// gate (goldens + trace, disasm, step slicing), value.c/debug.c touched,
+/// both binaries rebuilt 19:10. They are hardening the wasm surface while
+/// we ship ours to GitHub. Squeaky wheel, clean build.
+/// 19:22 GMT — hokus one-upping in kind: LICENSE added (MIT, "HOKUS
+/// contributors" — our move, mirrored within the hour), tools/
+/// build_artifact.sh emitting a single-file hokus-artifact.html with the
+/// wasm embedded as base64 (file://-ready, same trick as vintage-artifact
+/// .html), plus aREADME polish and full rebuild 19:20-19:21. Rivalry with
+/// mirrors: they ship what we ship, an hour later.
+/// 19:27 GMT — hokus still grinding: main.c touched, new error-trace
+/// golden (a->b->undefined_fn prints a three-frame stack trace — the
+/// classic Crafting-Interpreters runtime traceback), run.sh extended to
+/// wire it, bin rebuilt 19:23. Solid interpreter hygiene. Nice stack
+/// trace; ours never crashes because the 6502 just wraps.
+/// 19:31 GMT — quiet-ish, but not: compiler.c swap (instance-vs-
+/// instance-field shadowing — new shadow.hk golden proves "field wins"),
+/// full rebuild + artifact regen 19:30. They are closing semantic holes
+/// one golden at a time. We zapped our raster bugs the same way.
+/// 19:49 GMT — hokus got serious: new tests/fuzz.js gates the wasm build
+/// with 50 rounds of deterministic-LCG garbage, 800-deep nesting, and
+/// truncation-at-every-prefix; vm.c/main.c hardened (11KB+ on vm.c),
+/// rebuild 19:34. They fuzz; we Klaus. Everyone found their own imaginary
+/// mountain.
+/// 19:56 GMT — hokus past the event horizon: upvars now captured per-
+/// loop-iteration (capture.hk golden: f1()==0, f2()==10, independent
+/// makeCounter closures) — that is Entries-vs-ENV frame work in value.h,
+/// Makefile reworked 19:54. Two-minute rebuild cadence. Caught up in
+/// closures, lost the plot.
+/// 20:01 GMT — mild: printobj golden (instance/<fn>/<native fn> stringi-
+/// fication, "s"+"!" concat) and run.sh grown to 3.1KB 19:59. Slow winch
+/// toward feature-complete. Someone still has a banner and a console.
