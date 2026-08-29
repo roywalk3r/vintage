@@ -1,0 +1,24 @@
+[US-004] demo software — DONE
+- hello.s (character-mapped banner via font8x8), snake.s (playfield + food), cube.s
+  (rotating 3D wireframe cube, 6502 asm)
+- three real cube bugs found via instruction-level probe + per-edge reference diff:
+  (1) shared DXA tail clobber, (2) `bpl` over `sta ERR` discarded the Bresenham
+  accumulator every iteration -> x-dominant lines with dy>0 drew flat; branch on
+  carry and store unconditionally, (3) dropped low-add carry in TBL 16-bit pointer
+  -> rotations >=15 indexed 256 bytes early
+- tests/draw_probe.rs: 5 rotations x 12 edges pixel-exact vs independent reference
+- frame timing: first draw pass runs during frame 5 (frame-tick gate); demos use 6 frames
+- lessons: byte-level ROM patching unreliable (equates assemble absolute) — patch
+  at the SOURCE level; decode addresses from the assembled ROM dynamically
+
+[US-005] wasm hardware console — DONE
+- src/wasm.rs: hand-rolled C-ABI over a global Machine+Cpu (no wasm-bindgen);
+  12.7 KB cdylib with 10 vin_* exports
+- console/: Vite + vanilla TS. .vin format is INLINE per-segment payload
+  (addr,len,bytes...) — not a flat table (parser bug #1 caught in browser);
+  heap.set at __heap_base can exceed the default 2-page memory -> grow first
+  (bug #2). wasm32 release build + npm run build both verified.
+- browser-verified via playwright: CRT screen renders snake + cube demos,
+  keyboard arrows move the snake, CPU panel shows live registers
+- lesson: vite preview serves public/ with caching; hard-reload when
+  re-emitting ROMs
