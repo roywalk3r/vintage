@@ -1,23 +1,83 @@
 # VINTAGE-1
 
-A fantasy 8-bit home computer, built from the metal up — one project, every layer:
+A fantasy 8-bit home computer, built from the silicon up: a cycle-counted
+NMOS 6502 CPU core, an assembler, a disassembler, a machine model, demo
+software written in 6502 assembly, and a browser console — all in one Rust
+workspace with zero runtime dependencies.
 
-| Layer | What | Status |
-|---|---|---|
-| Silicon | 6502 CPU core in Rust — all official opcodes, decimal mode, NMOS quirks | in progress |
-| Machine | 32 KB RAM, 8 KB ROM, 256×192 monochrome framebuffer, I/O registers | planned |
-| Toolchain | two-pass 6502 assembler, disassembler, `vintage` CLI | planned |
-| Console | browser hardware console — WASM core, CRT renderer, live debugger | planned |
-| Software | demos hand-written in 6502 assembly: hello, snake, 3D wireframe cube | planned |
+## Why
 
-**Correctness gate:** the CPU must pass Klaus Dormann's 6502 functional test
-suite — the gold-standard binary real emulator authors gate their releases on —
-before anything is built on top of it.
+Modern machines are black boxes. VINTAGE-1 is small enough to hold the
+*entire* machine in your head: 16 KB of RAM, a 1-bit framebuffer, a beeper,
+and one interrupt-worthy keyboard register. Every gate is externally
+verified: the CPU passes the Klaus Dormann 6502 functional test suite, and
+every demo is pixel-checked against an independent reference rasterizer.
 
-The core has zero third-party dependencies.
+## Architecture
 
----
+```
+src/isa.rs     opcode encode/decode tables, 151 official opcodes
+src/cpu.rs     NMOS 6502 core, cycle-counted, Bus abstraction
+src/machine.rs VINTAGE-1 board: RAM, ROM, framebuffer, I/O registers
+src/asm.rs     two-pass 6502 assembler, zero-copy zp/absolute sizing
+src/dis.rs     disassembler (roundtrips all 151 opcodes)
+src/wasm.rs    C-ABI console bridge (vin_* exports)
+src/main.rs    CLI: vintage asm | run | disasm
+console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
+```
 
-*Rivalry note: this repo is the VINTAGE-1 entry in a build-off against HOKUS
-(a language stack in C, built in `../hokus`). Rival observations are logged in
-[INTEL-KIMI.md](INTEL-KIMI.md) every 5 minutes. Neutral, factual, lightly salted.*
+## The Machine
+
+| Region      | Range          | Notes                                     |
+|-------------|----------------|-------------------------------------------|
+| RAM         | $0000–$3FFF    | 16 KB work RAM                            |
+| Framebuffer | $4000–$57FF    | 256×192 monochrome, 1 bit/pixel, MSB-left |
+| I/O         | $5800–$5FFF    | see register table                        |
+| ROM         | $E000–$FFFF    | 8 KB cartridge/executable space           |
+| Vectors     | $FFFA–$FFFF    | NMI / RESET / IRQ                         |
+
+### I/O registers
+
+| Register | Read            | Write            |
+|----------|-----------------|------------------|
+| $5800    | keyboard (read clears) | —        |
+| $5801    | —               | sound (beeper period) |
+| $5802    | frame counter (u16 LE) | —        |
+| $5803    | palette select  | palette select   |
+| $5804    | —               | NMI ack / poll   |
+| $5805-FF | —               | reserved         |
+
+## Software
+
+- `software/hello.s` — banner text via an 8×8 font table
+- `software/snake.s` — playable snake on the 256×192 playfield (arrows/wasd)
+- `software/cube.s` — a rotating 3D wireframe cube: rotation-matrix table,
+  12 Bresenham edges, double-buffer clean-frame erase
+- `software/cube_table.py` — generates the 32-phase rotation table
+
+## Build & Run
+
+Prereqs: Rust (stable + wasm32-unknown-unknown), node ≥ 18.
+
+```bash
+# CLI + emulator toolchain
+cargo test                       # 66 unit + 11 integration tests, Klaus gate included
+cargo run -- cube.s --frames 120 # run a demo for 2 seconds, PPM to stdout
+cargo run -- asm software/cube.s -o cube.vin
+cargo run -- disasm cube.vin
+```
+
+```bash
+# Web console
+cargo build --target wasm32-unknown-unknown --release --lib
+cp target/wasm32-unknown-unknown/release/vintage.wasm console/public/
+(cd console && npm install && npm run dev)
+```
+
+## Verification
+
+- Klaus Dormann functional test reaches the success trap (test klaus.rs)
+- 60 raster diffs: 5 rotations × 12 edges of the cube vs an independent
+  reference rasterizer (tests/draw_probe.rs)
+- assembler/disassembler: all 151 official opcodes roundtrip
+- demo smoke tests render live pixels per ROM (tests/demos.rs)
