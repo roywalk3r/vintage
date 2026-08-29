@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! The VINTAGE-1 machine: memory map, memory-mapped video, and I/O registers.
 //!
 //! ```text

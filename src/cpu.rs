@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! 6502 CPU core — the silicon of VINTAGE-1.
 //!
 //! Models the original NMOS 6502, bug-for-bug: decimal-mode ADC/SBC with the

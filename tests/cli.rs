@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! End-to-end CLI tests: drive the real `vintage` binary.
 
 use std::fs;

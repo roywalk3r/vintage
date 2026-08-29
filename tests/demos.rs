@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! Demo ROM smoke tests: each software/*.s must assemble, run, and light pixels.
 
 use std::fs;

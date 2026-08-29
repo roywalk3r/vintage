@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! Two-pass 6502 assembler for VINTAGE-1.
 //!
 //! Syntax: `label:` definitions, `name = expr` equates, `$` hex, `%` binary,

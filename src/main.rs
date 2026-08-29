@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! VINTAGE-1 toolchain CLI: assemble, run, disassemble.
 
 use std::env;

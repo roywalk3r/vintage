@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! The 6502 instruction set — opcodes, addressing modes, and timing tables,
 //! shared by the CPU core, the disassembler, and the assembler.
 

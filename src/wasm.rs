@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! C-ABI surface for the web console (wasm32-unknown-unknown).
 //!
 //! One global VINTAGE-1 instance: a Machine plus its Cpu. JS talks to the

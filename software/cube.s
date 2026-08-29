@@ -1,3 +1,6 @@
+; VINTAGE-1
+; Copyright 2026 roywalk3r
+; SPDX-License-Identifier: MIT
 ; VINTAGE-1 rotating wireframe cube — software 3-D, no FPU, no tables but
 ; one: the 32-step projected vertex table is precomputed (cube_table.py),
 ; 16 bytes per step (8 vertices x px,py). Every frame-with-cube-moved has

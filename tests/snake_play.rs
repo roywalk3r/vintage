@@ -1,3 +1,6 @@
+//! VINTAGE-1
+//! Copyright 2026 roywalk3r
+//! SPDX-License-Identifier: MIT
 //! Snake gameplay: keyboard input at $5800 must steer the snake.
 
 use vintage::asm::assemble;

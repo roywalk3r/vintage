@@ -1,3 +1,6 @@
+// VINTAGE-1
+// Copyright 2026 roywalk3r
+// SPDX-License-Identifier: MIT
 //! VINTAGE-1 console front-end: loads the wasm core, parses .vin ROMs,
 //! drives run_frame per animation tick, blits the 1-bit framebuffer.
 
