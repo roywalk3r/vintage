@@ -1,13 +1,14 @@
-; VINTAGE-1 hello ROM — banner text via font8x8 (dhepper/font8x8, public
-; domain), rows bit-reversed for the MSB-left framebuffer so each glyph row
-; lands in one framebuffer byte.
+; Text banner — font rows bit-reversed for the MSB-left framebuffer so each
+; glyph row lands in one framebuffer byte. Title, solid rule, subtitle, and
+; a READY. line whose block cursor blinks off the frame counter.
 
  .org $E000
 
 SCREEN = $4000
-DST1 = SCREEN + 4*32 + 11
-DST2 = SCREEN + 12*32 + 6
-DST3 = SCREEN + 20*32 + 13
+TITLE  = SCREEN + 6*256 + 11   ; 8-pixel text rows are 256 fb bytes apart
+RULE   = SCREEN + 8*256 + 10   ; 11 underscores = solid 1px line, cols 10-20
+SUB    = SCREEN + 10*256 + 6   ; 19 cells wide, cols 6-24
+READY  = SCREEN + 15*256 + 13  ; 6 cells wide, cursor follows at col 20
 
 ; zero-page pointers
 MSGLO = $E0
@@ -19,37 +20,76 @@ DHI   = $E5
 GLYPH = $E6
 GHI   = $E7
 CHIDX = $E8
+VAL   = $E9
 
 start:
  jsr clear
- lda #<DST1                  ; "VINTAGE-1", row 8, centred
+ lda #<TITLE                 ; VINTAGE-1, row 6, centred
  sta DLO
- lda #DST1/$100
+ lda #TITLE/$100
  sta DHI
  lda #<msg1
  sta MSGLO
  lda #msg1/$100
  sta MSGHI
  jsr draw_msg
- lda #<DST2                 ; "8-BIT DREAM MACHINE", row 10
+ lda #<RULE                  ; solid rule, row 8
  sta DLO
- lda #DST2/$100
+ lda #RULE/$100
+ sta DHI
+ lda #<msg4
+ sta MSGLO
+ lda #msg4/$100
+ sta MSGHI
+ jsr draw_msg
+ lda #<SUB                   ; 8-BIT DREAM MACHINE, row 10, centred
+ sta DLO
+ lda #SUB/$100
  sta DHI
  lda #<msg2
  sta MSGLO
  lda #msg2/$100
  sta MSGHI
  jsr draw_msg
- lda #<DST3                 ; "READY.", row 20
+ lda #<READY                 ; READY., row 15, cursor at col 20
  sta DLO
- lda #DST3/$100
+ lda #READY/$100
  sta DHI
  lda #<msg3
  sta MSGLO
  lda #msg3/$100
  sta MSGHI
  jsr draw_msg
-hold: jmp hold
+
+; --- blink the block cursor at cell (20,15) off the frame counter ---
+anim:
+ lda $5802
+ lsr a
+ lsr a
+ lsr a
+ lsr a
+ and #1
+ beq curoff
+ lda #$FF
+ bne curname
+curoff:
+ lda #$00
+curname:
+ sta VAL
+ lda #$14
+ sta DLO
+ lda #$4F
+ sta DHI
+ ldy #0
+cur1:
+ lda VAL
+ sta (DLO),y
+ tya
+ clc
+ adc #32
+ tay
+ bne cur1
+ jmp anim
 
 ; --- clear the framebuffer ---------------------------------------------
 clear:
@@ -143,6 +183,8 @@ msg1: .text "VINTAGE-1"
 msg2: .text "8-BIT DREAM MACHINE"
  .byte 0
 msg3: .text "READY."
+ .byte 0
+msg4: .text "___________"
  .byte 0
 
 ; --- font8x8 basic latin $20-$7E, rows bit-reversed (MSB-left) ----------
