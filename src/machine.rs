@@ -1,0 +1,283 @@
+//! The VINTAGE-1 machine: memory map, memory-mapped video, and I/O registers.
+//!
+//! ```text
+//! $0000–$3FFF  RAM (16K)          $5800  keyboard   (read clears)
+//! $4000–$57FF  framebuffer (6K)   $5802  frame counter lo/hi
+//!   256×192, 1bpp, MSB-left       $5804  phosphor palette (green/amber/white)
+//! $5800–$5FFF  I/O                $5805  LFSR random
+//! $6000–$DFFF  RAM (32K)          $5807  beeper period (0 = silence)
+//! $E000–$FFFF  ROM (8K, vectors)  2 MHz → 33,333 cycles/frame @ 60 Hz
+//! ```
+
+use std::cell::Cell;
+
+use crate::cpu::{Bus, Cpu};
+
+pub const CYCLES_PER_FRAME: u32 = 33_333;
+pub const FB_BASE: u16 = 0x4000;
+pub const FB_LEN: u16 = 0x1800;
+pub const SCREEN_W: usize = 256;
+pub const SCREEN_H: usize = 192;
+
+pub const KEY_UP: u8 = 0x11;
+pub const KEY_DOWN: u8 = 0x12;
+pub const KEY_LEFT: u8 = 0x13;
+pub const KEY_RIGHT: u8 = 0x14;
+
+pub struct Machine {
+    ram_lo: [u8; 0x4000],
+    fb: [u8; FB_LEN as usize],
+    ram_hi: [u8; 0x8000],
+    rom: [u8; 0x2000],
+    // Registers with read side effects need interior mutability: `Bus::read`
+    // takes `&self`, exactly like a debugger peeking at live hardware.
+    key_pending: Cell<u8>,
+    frame: u16,
+    palette: u8,
+    lfsr: Cell<u16>,
+    beeper_period: u8,
+}
+
+impl Machine {
+    pub fn new(rom: [u8; 0x2000]) -> Self {
+        Self {
+            ram_lo: [0; 0x4000],
+            fb: [0; FB_LEN as usize],
+            ram_hi: [0; 0x8000],
+            rom,
+            key_pending: Cell::new(0),
+            frame: 0,
+            palette: 0,
+            lfsr: Cell::new(0xACE1),
+            beeper_period: 0,
+        }
+    }
+
+    /// Post a keypress into the one-key buffer (newest wins).
+    pub fn key(&mut self, code: u8) {
+        self.key_pending.set(code);
+    }
+
+    /// Advance the video frame counter (host calls this 60×/s).
+    pub fn tick_frame(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
+    }
+
+    /// Drive the CPU for one video frame's worth of cycles, then tick.
+    pub fn run_frame(&mut self, cpu: &mut Cpu) {
+        let mut budget = CYCLES_PER_FRAME as u64;
+        while budget > 0 {
+            let spent = u64::from(cpu.step(self));
+            budget = budget.saturating_sub(spent);
+        }
+        self.tick_frame();
+    }
+
+    /// The framebuffer as the host renderer sees it: 6144 bytes, one bit per
+    /// pixel, MSB leftmost, 32 bytes per scanline.
+    pub fn fb(&self) -> &[u8; FB_LEN as usize] {
+        &self.fb
+    }
+
+    pub fn palette(&self) -> u8 {
+        self.palette
+    }
+
+    pub fn beeper_period(&self) -> u8 {
+        self.beeper_period
+    }
+
+    /// 16-bit Galois LFSR, taps 0x002D — every read steps it.
+    fn rand(&self) -> u8 {
+        let mut l = self.lfsr.get();
+        l = (l >> 1) ^ (0x002D * (l & 1));
+        self.lfsr.set(l);
+        l as u8
+    }
+}
+
+impl Bus for Machine {
+    fn read(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x3FFF => self.ram_lo[addr as usize],
+            0x4000..=0x57FF => self.fb[(addr - FB_BASE) as usize],
+            0x5800 => {
+                let k = self.key_pending.get();
+                self.key_pending.set(0);
+                k
+            }
+            0x5802 => self.frame as u8,
+            0x5803 => (self.frame >> 8) as u8,
+            0x5804 => self.palette,
+            0x5805 => self.rand(),
+            0x5807 => self.beeper_period,
+            0x6000..=0xDFFF => self.ram_hi[(addr - 0x6000) as usize],
+            0xE000..=0xFFFF => self.rom[(addr - 0xE000) as usize],
+            _ => 0,
+        }
+    }
+    fn write(&mut self, addr: u16, val: u8) {
+        match addr {
+            0x0000..=0x3FFF => self.ram_lo[addr as usize] = val,
+            0x4000..=0x57FF => self.fb[(addr - FB_BASE) as usize] = val,
+            0x5804 => self.palette = val,
+            0x5807 => self.beeper_period = val,
+            0x6000..=0xDFFF => self.ram_hi[(addr - 0x6000) as usize] = val,
+            // ROM and unmapped I/O holes silently ignore writes.
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn machine() -> Machine {
+        Machine::new([0xEA; 0x2000])
+    }
+
+    #[test]
+    fn memory_map_decodes_all_regions() {
+        let mut m = machine();
+        m.write(0x0000, 0x11);
+        m.write(0x3FFF, 0x22);
+        m.write(0x4000, 0x33);
+        m.write(0x57FF, 0x44);
+        m.write(0x6000, 0x55);
+        m.write(0xDFFF, 0x66);
+        assert_eq!(m.read(0x0000), 0x11);
+        assert_eq!(m.read(0x3FFF), 0x22);
+        assert_eq!(m.read(0x4000), 0x33);
+        assert_eq!(m.read(0x57FF), 0x44);
+        assert_eq!(m.read(0x6000), 0x55);
+        assert_eq!(m.read(0xDFFF), 0x66);
+        assert_eq!(m.read(0xE000), 0xEA);
+        assert_eq!(m.read(0xFFFF), 0xEA);
+    }
+
+    #[test]
+    fn rom_is_write_protected() {
+        let mut m = machine();
+        m.write(0xE000, 0x42);
+        m.write(0xFFFC, 0x99);
+        assert_eq!(m.read(0xE000), 0xEA);
+        assert_eq!(m.read(0xFFFC), 0xEA);
+    }
+
+    #[test]
+    fn vectors_live_in_rom() {
+        let mut rom = [0; 0x2000];
+        rom[0x1FFC] = 0x00;
+        rom[0x1FFD] = 0xE0;
+        let m = Machine::new(rom);
+        assert_eq!(m.read(0xFFFC), 0x00);
+        assert_eq!(m.read(0xFFFD), 0xE0);
+    }
+
+    #[test]
+    fn framebuffer_is_memory_mapped() {
+        let mut m = machine();
+        m.write(0x4000, 0xFF);
+        m.write(0x57FF, 0x81);
+        assert_eq!(m.read(0x4000), 0xFF);
+        assert_eq!(m.fb()[0], 0xFF);
+        assert_eq!(m.fb()[FB_LEN as usize - 1], 0x81);
+    }
+
+    #[test]
+    fn keyboard_read_clears() {
+        let mut m = machine();
+        m.key(b'A');
+        assert_eq!(m.read(0x5800), b'A');
+        assert_eq!(m.read(0x5800), 0);
+    }
+
+    #[test]
+    fn keyboard_newest_key_wins() {
+        let mut m = machine();
+        m.key(b'A');
+        m.key(b'Z');
+        assert_eq!(m.read(0x5800), b'Z');
+    }
+
+    #[test]
+    fn frame_counter_ticks_and_reads_little_endian() {
+        let mut m = machine();
+        for _ in 0..3 {
+            m.tick_frame();
+        }
+        assert_eq!(m.read(0x5802), 3);
+        assert_eq!(m.read(0x5803), 0);
+
+        // wraps at 65536 frames (~18 minutes of uptime)
+        for _ in 0..(0x10000 - 3) {
+            m.tick_frame();
+        }
+        assert_eq!(m.read(0x5802), 0);
+        assert_eq!(m.read(0x5803), 0);
+        m.tick_frame();
+        assert_eq!(m.read(0x5802), 1);
+    }
+
+    #[test]
+    fn palette_register_roundtrip() {
+        let mut m = machine();
+        m.write(0x5804, 2);
+        assert_eq!(m.read(0x5804), 2);
+        assert_eq!(m.palette(), 2);
+    }
+
+    #[test]
+    fn random_reads_are_pseudorandom() {
+        let m = machine();
+        let mut values = [0u8; 64];
+        for v in values.iter_mut() {
+            *v = m.read(0x5805);
+        }
+        let distinct = {
+            let mut v = values.to_vec();
+            v.sort_unstable();
+            v.dedup();
+            v.len()
+        };
+        assert!(distinct >= 20, "only {distinct} distinct values in 64 reads");
+    }
+
+    #[test]
+    fn beeper_register_roundtrip() {
+        let mut m = machine();
+        m.write(0x5807, 100);
+        assert_eq!(m.read(0x5807), 100);
+        assert_eq!(m.beeper_period(), 100);
+        m.write(0x5807, 0);
+        assert_eq!(m.beeper_period(), 0);
+    }
+
+    #[test]
+    fn run_frame_consumes_budget_and_ticks() {
+        let mut m = machine();
+        let mut cpu = Cpu::new();
+        cpu.reset(&mut m);
+        m.run_frame(&mut cpu);
+        assert_eq!(m.read(0x5802), 1);
+        assert!(
+            cpu.cycles >= CYCLES_PER_FRAME as u64
+                && cpu.cycles < CYCLES_PER_FRAME as u64 + 8,
+            "cycles = {}",
+            cpu.cycles
+        );
+    }
+
+    #[test]
+    fn unmapped_io_holes_read_zero_and_ignore_writes() {
+        let mut m = machine();
+        assert_eq!(m.read(0x5801), 0);
+        assert_eq!(m.read(0x5806), 0);
+        assert_eq!(m.read(0x5FFF), 0);
+        m.write(0x5801, 0xFF);
+        m.write(0x5FFF, 0xFF);
+        assert_eq!(m.read(0x5801), 0);
+        assert_eq!(m.read(0x5FFF), 0);
+    }
+}
