@@ -91,6 +91,12 @@ pub extern "C" fn vin_beeper() -> u8 {
     m().beeper_period()
 }
 
+/// Active phosphor ($5804): 0 green, 1 amber, 2 white.
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_palette() -> u8 {
+    m().palette()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vin_rd(a: u16) -> u8 {
     m().read(a)

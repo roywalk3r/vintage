@@ -43,6 +43,7 @@ interface VintageApi {
   vin_fb_ptr(): number;
   vin_key(c: number): void;
   vin_beeper(): number;
+  vin_palette(): number;
   vin_rd(a: number): number;
   vin_wr(a: number, v: number): void;
   vin_cpu_state_ptr(): number;
@@ -50,8 +51,12 @@ interface VintageApi {
 
 
 const WASM_URL = "/vintage.wasm";
-const FG = [83, 255, 126];
-const BG = [4, 14, 6];
+// Phosphor presets for $5804, matching the headless PPM renderer in main.rs.
+const PALETTES: { fg: [number, number, number]; bg: [number, number, number] }[] = [
+  { fg: [51, 255, 51], bg: [6, 12, 6] },      // $5804 = 0: green
+  { fg: [255, 176, 0], bg: [16, 12, 0] },     // $5804 = 1: amber
+  { fg: [230, 230, 230], bg: [10, 10, 10] },  // $5804 = 2: white
+];
 
 let api: VintageApi;
 let heap: Uint8Array;
@@ -139,13 +144,14 @@ function audioFrame() {
 
 function blit() {
   const fb = new Uint8Array(api.memory.buffer, api.vin_fb_ptr(), 0x1800);
+  const { fg, bg } = PALETTES[api.vin_palette() % PALETTES.length];
   const px = fbImage.data;
   let di = 0;
   for (let i = 0; i < 0x1800; i++) {
     const b = fb[i];
     for (let bit = 7; bit >= 0; bit--) {
       const on = (b >> bit) & 1;
-      const c = on ? FG : BG;
+      const c = on ? fg : bg;
       px[di++] = c[0];
       px[di++] = c[1];
       px[di++] = c[2];
