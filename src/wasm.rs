@@ -84,6 +84,13 @@ pub extern "C" fn vin_key(code: u8) {
     m().key(code);
 }
 
+/// Current beeper period ($5807), 0 = silence. The console maps this to a
+/// square wave: audible frequency is 120,000 / (2 × period) Hz.
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_beeper() -> u8 {
+    m().beeper_period()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vin_rd(a: u16) -> u8 {
     m().read(a)

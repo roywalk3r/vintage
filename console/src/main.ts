@@ -42,6 +42,7 @@ interface VintageApi {
   vin_run_frame(): void;
   vin_fb_ptr(): number;
   vin_key(c: number): void;
+  vin_beeper(): number;
   vin_rd(a: number): number;
   vin_wr(a: number, v: number): void;
   vin_cpu_state_ptr(): number;
@@ -97,12 +98,44 @@ function tick() {
   } else if (running) {
     for (let i = 0; i < budgetPct * 333; i++) api.vin_step();
   }
+  audioFrame();
   blit();
   cpuPanel();
   requestAnimationFrame(tick);
 }
 
 let ctxRef: CanvasRenderingContext2D;
+
+// The beeper is one square-wave channel: $5807 holds the half-period in
+// CPU cycles, 0 silences. Browsers require a user gesture before audio,
+// so the context is created lazily on the first keypress or click.
+let audioCtx: AudioContext | null = null;
+let audioOsc: OscillatorNode | null = null;
+let audioGain: GainNode | null = null;
+
+function ensureAudio() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext();
+  audioOsc = audioCtx.createOscillator();
+  audioOsc.type = "square";
+  audioGain = audioCtx.createGain();
+  audioGain.gain.value = 0;
+  audioOsc.connect(audioGain).connect(audioCtx.destination);
+  audioOsc.start();
+}
+
+const BEEPER_CLOCK = 120_000; // effective toggle clock, Hz
+
+function audioFrame() {
+  if (!audioCtx) return;
+  const n = api.vin_beeper();
+  if (n === 0) {
+    audioGain!.gain.value = 0;
+  } else {
+    audioOsc!.frequency.value = BEEPER_CLOCK / (2 * n);
+    audioGain!.gain.value = 0.04;
+  }
+}
 
 function blit() {
   const fb = new Uint8Array(api.memory.buffer, api.vin_fb_ptr(), 0x1800);
@@ -139,6 +172,7 @@ function cpuPanel() {
 function bindUi(ctx: CanvasRenderingContext2D) {
   ctxRef = ctx;
   window.addEventListener("keydown", (e) => {
+    ensureAudio();
     const code = KEYMAP[e.key];
     if (code !== undefined) {
       e.preventDefault();
@@ -150,6 +184,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
   });
   const runBtn = document.getElementById("run")!;
   runBtn.addEventListener("click", () => {
+    ensureAudio();
     running = !running;
     runBtn.textContent = running ? "pause" : "resume";
   });
@@ -170,7 +205,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     e.textContent = budgetPct === 100 ? "100% = full speed"
       : `${budgetPct}% ≈ ${budgetPct * 333} cycles/frame`;
   });
-  const demoNames = ["hello", "snake", "cube"];
+  const demoNames = ["hello", "snake", "cube", "tune"];
   const romList = document.getElementById("roms")!;
   for (const n of demoNames) {
     const b = document.createElement("button");

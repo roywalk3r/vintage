@@ -57,3 +57,34 @@ fn cube_draws_wireframe() {
     // first draw pass lands on frame 5 (frame-tick gate), so allow 6
     assert!(run_demo("cube.s", "6") > 50, "wireframe should be visible");
 }
+
+#[test]
+fn tune_cycles_the_beeper() {
+    let src = fs::read_to_string("software/tune.s").unwrap();
+    let bin = vintage::asm::assemble(&src).expect("tune.s must assemble");
+    let mut rom = [0u8; 0x2000];
+    for (addr, data) in &bin.segments {
+        let i = *addr as usize - 0xE000;
+        rom[i..i + data.len()].copy_from_slice(data);
+    }
+    let mut m = vintage::machine::Machine::new(rom);
+    let mut cpu = vintage::cpu::Cpu::new();
+    cpu.reset(&mut m);
+
+    let mut silent_frames = 0;
+    let mut sounding_frames = 0;
+    let mut periods = std::collections::BTreeSet::new();
+    for _ in 0..120 {
+        m.run_frame(&mut cpu);
+        let p = m.beeper_period();
+        if p == 0 {
+            silent_frames += 1;
+        } else {
+            sounding_frames += 1;
+            periods.insert(p);
+        }
+    }
+    assert!(sounding_frames >= 60, "tune must spend real time audibly");
+    assert!(silent_frames >= 4, "rests exist in the table");
+    assert!(periods.len() >= 5, "expected several distinct pitches, got {periods:?}");
+}
