@@ -243,7 +243,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     e.textContent = budgetPct === 100 ? "100% = full speed"
       : `${budgetPct}% ≈ ${budgetPct * 333} cycles/frame`;
   });
-  const demoNames = ["hello", "snake", "cube", "tune"];
+  const demoNames = ["hello", "snake", "cube", "tune", "breakout"];
   const romList = document.getElementById("roms")!;
   for (const n of demoNames) {
     const b = document.createElement("button");
