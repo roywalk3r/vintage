@@ -19,7 +19,7 @@
 - ☑ Demo: tune — beeper melody with real audio
 - ☑ Programmer's reference (`docs/REFERENCE.md`)
 - ☑ Public GitHub repo with MIT license and author headers
-- ☐ Demo: breakout — the first demo combining input + video + sound
+- ☑ Demo: breakout — the first demo combining input + video + sound
 - ☐ Per-demo cycle accounting in the console
 - ☐ Banked ROM / multi-load cartridge format
 - ☐ Hardware interrupts: NMI/IRQ vectors wired to vsync
