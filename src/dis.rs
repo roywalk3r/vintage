@@ -1,6 +1,7 @@
 //! VINTAGE-1
-//! Copyright 2026 roywalk3r
-//! SPDX-License-Identifier: MIT
+//! Author: roywalk3r
+//! Repo: https://github.com/roywalk3r/vintage
+//! License: MIT
 //! 6502 disassembler — renders bytes back to assembler syntax, so
 //! `assemble(disasm(b))` round-trips for every official opcode.
 

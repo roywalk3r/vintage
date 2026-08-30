@@ -1,6 +1,7 @@
 ; VINTAGE-1
-; Copyright 2026 roywalk3r
-; SPDX-License-Identifier: MIT
+; Author: roywalk3r
+; Repo: https://github.com/roywalk3r/vintage
+; License: MIT
 ; Text banner — font rows bit-reversed for the MSB-left framebuffer so each
 ; glyph row lands in one framebuffer byte. Title, solid rule, subtitle, and
 ; a READY. line whose block cursor blinks off the frame counter.

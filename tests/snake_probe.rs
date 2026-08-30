@@ -1,6 +1,7 @@
 //! VINTAGE-1
-//! Copyright 2026 roywalk3r
-//! SPDX-License-Identifier: MIT
+//! Author: roywalk3r
+//! Repo: https://github.com/roywalk3r/vintage
+//! License: MIT
 //! Snake gameplay probes: wall death must not let the head enter a wall
 //! cell, and '+'/'-' must retune the step divider live.
 

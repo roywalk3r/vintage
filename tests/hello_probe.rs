@@ -1,6 +1,7 @@
 //! VINTAGE-1
-//! Copyright 2026 roywalk3r
-//! SPDX-License-Identifier: MIT
+//! Author: roywalk3r
+//! Repo: https://github.com/roywalk3r/vintage
+//! License: MIT
 //! Hello banner probes: the redesigned banner must place the title on
 //! screen row 6 with NOTHING lit above it, and the subtitle on row 10.
 

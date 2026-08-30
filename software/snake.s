@@ -1,6 +1,7 @@
 ; VINTAGE-1
-; Copyright 2026 roywalk3r
-; SPDX-License-Identifier: MIT
+; Author: roywalk3r
+; Repo: https://github.com/roywalk3r/vintage
+; License: MIT
 ; Snake — arrows at $5800 ($11 up, $12 down, $13 left, $14 right),
 ; +/- (0x15/0x16) retune the move divider live (1 = fastest, 8 = slowest).
 ; The framebuffer is 32 bytes wide, so grid cell (x,y) lives at fb + y*256 + x:

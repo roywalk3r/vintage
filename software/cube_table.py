@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # VINTAGE-1
-# Copyright 2026 roywalk3r
-# SPDX-License-Identifier: MIT
+# Author: roywalk3r
+# Repo: https://github.com/roywalk3r/vintage
+# License: MIT
 """Precompute the 32-step projected-cube vertex table for software/cube.s.
 
 Vertices (±1,±1,±1) spin about the Y axis, 32 steps/turn; each step stores

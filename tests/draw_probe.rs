@@ -1,6 +1,7 @@
 //! VINTAGE-1
-//! Copyright 2026 roywalk3r
-//! SPDX-License-Identifier: MIT
+//! Author: roywalk3r
+//! Repo: https://github.com/roywalk3r/vintage
+//! License: MIT
 //! Per-edge cube probe: patch cube.s so a single edge draws per run, then
 //! diff that edge's raster against a reference rasterizer. Sweeps several
 //! rotation steps to cover every Bresenham branch combination.

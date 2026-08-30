@@ -1,6 +1,7 @@
 //! VINTAGE-1
-//! Copyright 2026 roywalk3r
-//! SPDX-License-Identifier: MIT
+//! Author: roywalk3r
+//! Repo: https://github.com/roywalk3r/vintage
+//! License: MIT
 //! The correctness gate: Klaus Dormann's 6502 functional test must reach its
 //! success trap before anything is built on this CPU.
 //!
