@@ -81,6 +81,34 @@ fn asm_writes_v1_container() {
 }
 
 #[test]
+fn asm_writes_v1b_container_for_banked_source() {
+    let bin = tmp("twobank.v1b");
+    let _ = fs::remove_file(&bin);
+    let out = vintage()
+        .args(["asm", "tests/fixtures/twobank.s", "-o"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let data = fs::read(&bin).unwrap();
+    assert_eq!(&data[0..3], b"V1B", "magic");
+    assert_eq!(u16::from_le_bytes([data[3], data[4]]), 2, "bank count");
+    // Layout is fully determined: bank 0 carries the $E000 code and the
+    // $FFFA vectors; bank 1 carries the $E005 trampoline and $F000 code.
+    assert_eq!(u16::from_le_bytes([data[5], data[6]]), 2, "bank 0 segs");
+    assert_eq!(u16::from_le_bytes([data[7], data[8]]), 0xE000);
+    assert_eq!(u16::from_le_bytes([data[16], data[17]]), 0xFFFA);
+    assert_eq!(u16::from_le_bytes([data[26], data[27]]), 2, "bank 1 segs");
+    assert_eq!(u16::from_le_bytes([data[28], data[29]]), 0xE005);
+    assert_eq!(u16::from_le_bytes([data[35], data[36]]), 0xF000);
+}
+
+#[test]
 fn disasm_lists_instructions() {
     let raw = tmp("snippet.bin");
     fs::write(&raw, [0xA9u8, 0x41, 0x8D, 0x34, 0x12, 0xEA]).unwrap();
@@ -100,6 +128,28 @@ fn disasm_lists_instructions() {
     assert!(text.contains("lda #$41"), "{text}");
     assert!(text.contains("sta $1234"), "{text}");
     assert!(text.contains("nop"), "{text}");
+}
+
+#[test]
+fn run_executes_banked_program() {
+    let ppm = tmp("twobank.ppm");
+    let _ = fs::remove_file(&ppm);
+    let out = vintage()
+        .args(["run", "tests/fixtures/twobank.s", "--frames", "2", "--ppm"])
+        .arg(&ppm)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let data = fs::read(&ppm).unwrap();
+    let body = b"P6\n256 192\n255\n".len();
+    let px = |x: usize, y: usize| &data[body + (y * 256 + x) * 3..body + (y * 256 + x) * 3 + 3];
+    assert_eq!(px(0, 0), &[51, 255, 51], "bank 1 should have lit x=0");
+    assert_eq!(px(1, 0), &[6, 12, 6], "x=1 stays dark");
 }
 
 #[test]

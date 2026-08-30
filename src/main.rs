@@ -97,30 +97,57 @@ fn cmd_asm(args: &[String]) -> Result<(), String> {
     let bin = assemble(&src).map_err(die)?;
 
     let out_path = opts.flags.get("-o").map_or_else(
-        || src_path.with_extension("vin"),
+        || {
+            if bin.extra_banks.is_empty() {
+                src_path.with_extension("vin")
+            } else {
+                src_path.with_extension("v1b")
+            }
+        },
         PathBuf::from,
     );
-    write_vin(&out_path, &bin).map_err(|e| format!("{}: {e}", out_path.display()))?;
+    let banks = write_container(&out_path, &bin).map_err(|e| format!("{}: {e}", out_path.display()))?;
     println!(
-        "wrote {} ({} segment{})",
+        "wrote {} ({} segment{}, {} bank{})",
         out_path.display(),
         bin.segments.len(),
-        if bin.segments.len() == 1 { "" } else { "s" }
+        if bin.segments.len() == 1 { "" } else { "s" },
+        banks,
+        if banks == 1 { "" } else { "s" }
     );
     Ok(())
 }
 
 /// V1 container: magic "V1", u16 segment count, then per segment
-/// u16 address, u16 length, bytes. All little-endian.
-fn write_vin(path: &Path, bin: &Binary) -> std::io::Result<()> {
-    let mut out = Vec::from(b"V1");
-    out.extend_from_slice(&(bin.segments.len() as u16).to_le_bytes());
-    for (addr, bytes) in &bin.segments {
-        out.extend_from_slice(&addr.to_le_bytes());
-        out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-        out.extend_from_slice(bytes);
+/// u16 address, u16 length, bytes. V1B adds cartridge banks: magic "V1B",
+/// u16 bank count, then per bank the same segment list as V1. Bank 0 first.
+/// All little-endian. Returns the bank count for the CLI's report line.
+fn write_container(path: &Path, bin: &Binary) -> std::io::Result<usize> {
+    let mut banks: Vec<&Vec<(u16, Vec<u8>)>> = vec![&bin.segments];
+    banks.extend(bin.extra_banks.iter());
+    let mut out = Vec::new();
+    if banks.len() == 1 {
+        out.extend_from_slice(b"V1");
+        out.extend_from_slice(&(bin.segments.len() as u16).to_le_bytes());
+        for (addr, bytes) in &bin.segments {
+            out.extend_from_slice(&addr.to_le_bytes());
+            out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+    } else {
+        out.extend_from_slice(b"V1B");
+        out.extend_from_slice(&(banks.len() as u16).to_le_bytes());
+        for bank in banks.iter() {
+            out.extend_from_slice(&(bank.len() as u16).to_le_bytes());
+            for (addr, bytes) in bank.iter() {
+                out.extend_from_slice(&addr.to_le_bytes());
+                out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+                out.extend_from_slice(bytes);
+            }
+        }
     }
-    fs::write(path, out)
+    fs::write(path, out)?;
+    Ok(banks.len())
 }
 
 fn cmd_run(args: &[String]) -> Result<(), String> {
@@ -134,28 +161,26 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         None => 120,
     };
 
-    // ROM image assembled from $E000–$FFFF segments; everything else is
-    // poked into RAM through the bus.
+    // Cartridge banks from $E000–$FFFF segments; non-ROM segments are
+    // poked into RAM through the bus once the machine exists.
     let mut rom = [0u8; 0x2000];
-    let mut machine = None;
+    let mut ram_pokes: Vec<(u16, Vec<u8>)> = Vec::new();
     for &(addr, ref bytes) in &bin.segments {
         match addr {
-            0xE000..=0xFFFF => {
-                let end = addr as usize + bytes.len();
-                if end > 0x1_0000 {
-                    return Err(format!("segment ${addr:04X} runs past $FFFF"));
-                }
-                rom[addr as usize - 0xE000..end - 0xE000].copy_from_slice(bytes);
-            }
-            _ => {
-                let m = machine.get_or_insert_with(|| Machine::new(rom));
-                for (i, b) in bytes.iter().enumerate() {
-                    m.write(addr + i as u16, *b);
-                }
-            }
+            0xE000..=0xFFFF => copy_bank_segment(&mut rom, addr, bytes)?,
+            _ => ram_pokes.push((addr, bytes.clone())),
         }
     }
-    let mut machine = machine.unwrap_or_else(|| Machine::new(rom));
+    let mut banks: Vec<[u8; 0x2000]> = vec![rom];
+    for seg in &bin.extra_banks {
+        banks.push(rom_image(seg)?);
+    }
+    let mut machine = Machine::with_banks(banks);
+    for (addr, bytes) in &ram_pokes {
+        for (i, b) in bytes.iter().enumerate() {
+            machine.write(addr + i as u16, *b);
+        }
+    }
 
     let mut cpu = Cpu::new();
     cpu.reset(&mut machine);
@@ -175,6 +200,24 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         frames,
         cpu.cycles
     );
+    Ok(())
+}
+
+/// Map one bank's $E000–$FFFF segments into a full 8K image.
+fn rom_image(segments: &[(u16, Vec<u8>)]) -> Result<[u8; 0x2000], String> {
+    let mut img = [0u8; 0x2000];
+    for (addr, bytes) in segments {
+        copy_bank_segment(&mut img, *addr, bytes)?;
+    }
+    Ok(img)
+}
+
+fn copy_bank_segment(img: &mut [u8; 0x2000], addr: u16, bytes: &[u8]) -> Result<(), String> {
+    let end = addr as usize + bytes.len();
+    if addr < 0xE000 || end > 0x1_0000 {
+        return Err(format!("segment ${addr:04X} is outside the $E000-$FFFF window"));
+    }
+    img[addr as usize - 0xE000..end - 0xE000].copy_from_slice(bytes);
     Ok(())
 }
 
