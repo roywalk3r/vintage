@@ -13,6 +13,9 @@ and one interrupt-worthy keyboard register. Every gate is externally
 verified: the CPU passes the Klaus Dormann 6502 functional test suite, and
 every demo is pixel-checked against an independent reference rasterizer.
 
+The full ship list — what's done and what's next — lives in
+[ROADMAP.md](ROADMAP.md).
+
 ## Architecture
 
 ```
