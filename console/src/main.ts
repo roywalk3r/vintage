@@ -47,6 +47,7 @@ interface VintageApi {
   vin_rd(a: number): number;
   vin_wr(a: number, v: number): void;
   vin_cpu_state_ptr(): number;
+  vin_cycles(): number;
 }
 
 
@@ -63,6 +64,13 @@ let heap: Uint8Array;
 let fbImage: ImageData;
 let running = true;
 let budgetPct = 100;
+
+// Per-demo cycle accounting: 32-frame rolling average of cycles/frame,
+// plus the total since this ROM booted.
+const CYC_WINDOW = 32;
+let lastCycles = 0;
+const cycWindow = new Float64Array(CYC_WINDOW);
+let cycIdx = 0;
 
 async function main() {
   const { instance } = await WebAssembly.instantiateStreaming(
@@ -90,6 +98,9 @@ function loadRom(vin: Vin) {
   heap.set(vin.rom, base);
   api.vin_load_rom(base, 0x2000);
   api.vin_cpu_reset();
+  lastCycles = 0;
+  cycWindow.fill(0);
+  cycIdx = 0;
 }
 
 function basePtr(): number {
@@ -106,7 +117,28 @@ function tick() {
   audioFrame();
   blit();
   cpuPanel();
+  cycPanel();
   requestAnimationFrame(tick);
+}
+
+function cycPanel() {
+  // u64 crosses the C ABI as a BigInt; JS numbers are plenty for displays.
+  const now = Number(api.vin_cycles());
+  const delta = now - lastCycles;
+  lastCycles = now;
+  // Frames where the machine is paused report delta 0; counting them
+  // would drag the average down, so only running frames enter the window.
+  if (delta > 0) {
+    cycWindow[cycIdx++ % CYC_WINDOW] = delta;
+  }
+  let avg = 0;
+  for (const v of cycWindow) avg += v;
+  avg /= CYC_WINDOW;
+  const el = document.getElementById("cyc")!;
+  el.textContent =
+    `cycles=$${now.toString(16).toUpperCase()}` +
+    `\nlast frame=${delta.toLocaleString()} cyc` +
+    `\nper frame ≈ ${avg === 0 ? "—" : Math.round(avg).toLocaleString()} cyc`;
 }
 
 let ctxRef: CanvasRenderingContext2D;

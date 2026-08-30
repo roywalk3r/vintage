@@ -97,6 +97,13 @@ pub extern "C" fn vin_palette() -> u8 {
     m().palette()
 }
 
+/// Total CPU cycles since the current ROM booted, for the console's
+/// cycle-accounting panel.
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_cycles() -> u64 {
+    c().cycles
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vin_rd(a: u16) -> u8 {
     m().read(a)
