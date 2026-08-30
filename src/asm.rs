@@ -18,6 +18,9 @@ use crate::isa::{encode, instruction_len, Mode, Op};
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Binary {
     pub segments: Vec<(u16, Vec<u8>)>,
+    /// Additional cartridge banks from `.bank 1`, `.bank 2`, … Each is a
+    /// full V1-style segment list; bank 0 lives in `segments`.
+    pub extra_banks: Vec<Vec<(u16, Vec<u8>)>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -332,6 +335,7 @@ enum Stmt {
     Text(String),
     Res(Expr),
     Align(Expr),
+    Bank(Expr),
     Equate(String, Expr),
     Instr(Op, Operand),
 }
@@ -388,6 +392,7 @@ fn parse_statement(no: usize, s: &str) -> Result<Stmt, Error> {
         ".text" => Ok(Stmt::Text(parse_string(operand, no)?)),
         ".res" => Ok(Stmt::Res(parse_expr(operand, no)?)),
         ".align" => Ok(Stmt::Align(parse_expr(operand, no)?)),
+        ".bank" => Ok(Stmt::Bank(parse_expr(operand, no)?)),
         n if n.starts_with('.') => Err(err(no, format!("unknown directive '{n}'"))),
         _ => {
             let Some(op) = mnemonic(&name) else {
@@ -509,6 +514,8 @@ enum Rec {
     },
     /// `.text` / `.res` / `.align` — fully resolved during pass 1.
     Raw(Vec<u8>),
+    /// Emitted by `.bank n`; reroutes the emit target for pass 2.
+    BankMarker(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -594,6 +601,24 @@ fn decide_mode(
         }
     };
     Ok((mode, expr, size(mode)))
+}
+
+/// Route the emit accumulator into its bank's list, leaving it empty.
+/// Bank 0 goes to `bank0`; bank n ≥ 1 to `extra_banks[n-1]`.
+fn flush_sink(
+    bank0: &mut Vec<(u16, Vec<u8>)>,
+    extra_banks: &mut Vec<Vec<(u16, Vec<u8>)>>,
+    sink: usize,
+    segments: &mut Vec<(u16, Vec<u8>)>,
+) {
+    if sink == 0 {
+        bank0.append(segments);
+    } else {
+        while extra_banks.len() < sink {
+            extra_banks.push(Vec::new());
+        }
+        extra_banks[sink - 1].append(segments);
+    }
 }
 
 /// Parse `src` into a loadable binary. Fails with a 1-based line number.
@@ -687,6 +712,17 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                 recs.push((pc, Rec::Raw(vec![0; pad as usize])));
                 pc += pad as u32;
             }
+            Stmt::Bank(e) => {
+                let v = resolve(e, &syms, pc)
+                    .ok_or_else(|| err(no, ".bank needs a resolvable number"))?;
+                if !(0..=255).contains(&v) {
+                    return Err(err(no, ".bank needs a number in 0..=255"));
+                }
+                // Every bank assembles with its own program counter; label
+                // values follow (with `.org` to place code explicitly).
+                pc = 0;
+                recs.push((pc, Rec::BankMarker(v as usize)));
+            }
         }
         if pc > 0x1_0000 {
             return Err(err(no, "program runs past $FFFF"));
@@ -694,8 +730,17 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
     }
 
     // ---- pass 2: emit bytes with the complete symbol table
+    let mut bank0: Vec<(u16, Vec<u8>)> = Vec::new();
+    let mut extra_banks: Vec<Vec<(u16, Vec<u8>)>> = Vec::new();
+    let mut sink = 0usize;
     let mut segments: Vec<(u16, Vec<u8>)> = Vec::new();
     for (addr, rec) in recs {
+        // A .bank marker reroutes the emit target for everything after it.
+        if let Rec::BankMarker(b) = rec {
+            flush_sink(&mut bank0, &mut extra_banks, sink, &mut segments);
+            sink = b;
+            continue;
+        }
         let mut a = addr as usize;
         let put = |a: usize, b: u8, segments: &mut Vec<(u16, Vec<u8>)>| {
             if let Some(last) = segments
@@ -708,6 +753,7 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
             segments.push((a as u16, vec![b]));
         };
         match rec {
+            Rec::BankMarker(_) => {}
             Rec::Raw(bytes) => {
                 for b in bytes {
                     put(a, b, &mut segments);
@@ -767,7 +813,9 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
             }
         }
     }
-    Ok(Binary { segments })
+    // flush the final bank; bank 0's bytes land back in `segments`
+    flush_sink(&mut bank0, &mut extra_banks, sink, &mut segments);
+    Ok(Binary { segments: bank0, extra_banks })
 }
 
 #[cfg(test)]
@@ -926,5 +974,56 @@ mod tests {
     fn current_address_symbol() {
         let bin = assemble(" here = *\n .byte here, here+1").unwrap();
         assert_eq!(bin.segments[0].1, vec![0x00, 0x01]);
+    }
+
+    #[test]
+    fn no_bank_directive_yields_single_bank() {
+        let bin = assemble(" lda #$41").unwrap();
+        assert_eq!(bin.segments[0].1, vec![0xA9, 0x41]);
+        assert!(bin.extra_banks.is_empty());
+    }
+
+    #[test]
+    fn bank_directive_splits_output_into_banks() {
+        let bin = assemble(
+            " .org $E000\n lda #$41\n \
+             .bank 1\n .org $E000\n lda #$42\n \
+             .bank 2\n .org $E000\n lda #$43",
+        )
+        .unwrap();
+        assert_eq!(bin.segments[0].1, vec![0xA9, 0x41]);
+        assert_eq!(bin.extra_banks.len(), 2);
+        assert_eq!(bin.extra_banks[0][0].1, vec![0xA9, 0x42]);
+        assert_eq!(bin.extra_banks[1][0].1, vec![0xA9, 0x43]);
+    }
+
+    #[test]
+    fn bank_switch_resets_pc_per_bank() {
+        let bin = assemble(
+            " .org $E000\n nop\n \
+             .bank 1\n nop ; pc restarts at 0 with no .org\n \
+             .org $E001\n lda #$42",
+        )
+        .unwrap();
+        assert_eq!(
+            bin.extra_banks[0],
+            vec![(0, vec![0xEA]), (0xE001, vec![0xA9, 0x42])]
+        );
+    }
+
+    #[test]
+    fn symbols_are_shared_across_banks() {
+        let bin = assemble(
+            " .org $E000\n data = $42\n \
+             .bank 1\n .org $E000\n lda #data",
+        )
+        .unwrap();
+        assert_eq!(bin.extra_banks[0][0].1, vec![0xA9, 0x42]);
+    }
+
+    #[test]
+    fn negative_bank_number_fails() {
+        let err = assemble(" .bank -1").unwrap_err();
+        assert_eq!(err.line, 1);
     }
 }

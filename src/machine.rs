@@ -32,7 +32,10 @@ pub struct Machine {
     ram_lo: [u8; 0x4000],
     fb: [u8; FB_LEN as usize],
     ram_hi: [u8; 0x8000],
-    rom: [u8; 0x2000],
+    /// Cartridge banks. `banks[0]` is the boot image; software picks the
+    /// visible one through the $5806 register. One bank = the 8K window.
+    banks: Vec<[u8; 0x2000]>,
+    bank_sel: usize,
     // Registers with read side effects need interior mutability: `Bus::read`
     // takes `&self`, exactly like a debugger peeking at live hardware.
     key_pending: Cell<u8>,
@@ -44,11 +47,18 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(rom: [u8; 0x2000]) -> Self {
+        Self::with_banks(vec![rom])
+    }
+
+    /// Build a machine from one image per cartridge bank. The first entry
+    /// boots; higher banks become visible via $5806.
+    pub fn with_banks(banks: Vec<[u8; 0x2000]>) -> Self {
         Self {
             ram_lo: [0; 0x4000],
             fb: [0; FB_LEN as usize],
             ram_hi: [0; 0x8000],
-            rom,
+            bank_sel: 0,
+            banks,
             key_pending: Cell::new(0),
             frame: 0,
             palette: 0,
@@ -114,9 +124,10 @@ impl Bus for Machine {
             0x5803 => (self.frame >> 8) as u8,
             0x5804 => self.palette,
             0x5805 => self.rand(),
+            0x5806 => self.bank_sel as u8,
             0x5807 => self.beeper_period,
             0x6000..=0xDFFF => self.ram_hi[(addr - 0x6000) as usize],
-            0xE000..=0xFFFF => self.rom[(addr - 0xE000) as usize],
+            0xE000..=0xFFFF => self.banks[self.bank_sel][(addr - 0xE000) as usize],
             _ => 0,
         }
     }
@@ -125,6 +136,11 @@ impl Bus for Machine {
             0x0000..=0x3FFF => self.ram_lo[addr as usize] = val,
             0x4000..=0x57FF => self.fb[(addr - FB_BASE) as usize] = val,
             0x5804 => self.palette = val,
+            0x5806 => {
+                if (val as usize) < self.banks.len() {
+                    self.bank_sel = val as usize;
+                }
+            }
             0x5807 => self.beeper_period = val,
             0x6000..=0xDFFF => self.ram_hi[(addr - 0x6000) as usize] = val,
             // ROM and unmapped I/O holes silently ignore writes.
@@ -277,11 +293,37 @@ mod tests {
     fn unmapped_io_holes_read_zero_and_ignore_writes() {
         let mut m = machine();
         assert_eq!(m.read(0x5801), 0);
-        assert_eq!(m.read(0x5806), 0);
         assert_eq!(m.read(0x5FFF), 0);
         m.write(0x5801, 0xFF);
         m.write(0x5FFF, 0xFF);
         assert_eq!(m.read(0x5801), 0);
         assert_eq!(m.read(0x5FFF), 0);
+    }
+
+    #[test]
+    fn bank_register_selects_the_rom_window() {
+        let mut m = Machine::with_banks(vec![[0xAA; 0x2000], [0xBB; 0x2000]]);
+        assert_eq!(m.read(0xE000), 0xAA);
+        m.write(0x5806, 1);
+        assert_eq!(m.read(0x5806), 1);
+        assert_eq!(m.read(0xE000), 0xBB);
+        m.write(0x5806, 0);
+        assert_eq!(m.read(0xE000), 0xAA);
+    }
+
+    #[test]
+    fn bank_window_stays_write_protected() {
+        let mut m = Machine::with_banks(vec![[0xEA; 0x2000], [0x42; 0x2000]]);
+        m.write(0x5806, 1);
+        m.write(0xE000, 0x99);
+        assert_eq!(m.read(0xE000), 0x42);
+    }
+
+    #[test]
+    fn out_of_range_bank_writes_are_ignored() {
+        let mut m = Machine::with_banks(vec![[0xEA; 0x2000], [0x42; 0x2000]]);
+        m.write(0x5806, 7);
+        assert_eq!(m.read(0x5806), 0);
+        assert_eq!(m.read(0xE000), 0xEA);
     }
 }
