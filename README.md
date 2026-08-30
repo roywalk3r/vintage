@@ -41,11 +41,11 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
 | Register | Read            | Write            |
 |----------|-----------------|------------------|
 | $5800    | keyboard (read clears) | —        |
-| $5801    | —               | sound (beeper period) |
-| $5802    | frame counter (u16 LE) | —        |
-| $5803    | palette select  | palette select   |
-| $5804    | —               | NMI ack / poll   |
-| $5805-FF | —               | reserved         |
+| $5802    | frame counter (u16 LE, $5802/$5803) | — |
+| $5804    | palette select  | palette select   |
+| $5805    | LFSR random (read steps it) | —   |
+| $5807    | beeper period (0 = silence) | beeper period |
+| $5806+   | —               | reserved         |
 
 ## Software
 
@@ -54,6 +54,8 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
 - `software/cube.s` — a rotating 3D wireframe cube: rotation-matrix table,
   12 Bresenham edges, double-buffer clean-frame erase
 - `software/cube_table.py` — generates the 32-phase rotation table
+- `software/tune.s` — a 32-note beeper melody: a period table indexed per
+  note, frame-paced through $5807 (the console plays actual audio)
 
 ## Build & Run
 
