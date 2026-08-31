@@ -43,12 +43,13 @@ every demo is pixel-checked against an independent reference rasterizer.
 - ☑ Programmer's reference (`docs/REFERENCE.md`)
 - ☑ Public GitHub repo with MIT license and author headers
 - ☑ Per-demo cycle accounting in the console
-- ☑ Banked ROM / multi-bank cartridge format (V1B container, $5806 bank register)
-- ☐ Hardware interrupts: NMI/IRQ vectors wired to vsync
-- ☐ Sprite unit (2 hardware sprites with x/y latches)
-- ☐ 2bpp color mode (selected via `$5804` high bit)
-- ☐ Save states (`.vst` files, console load/save)
-- ☐ In-browser assembler: paste source, run — no toolchain install
+- ☑ Banked ROM / multi-bank banked cartridge format (V1B container, $5806 bank register)
+- ☑ Hardware interrupts: maskable vsync IRQ through $FFFE (NMI reserved)
+- ☑ Sprite unit (two 8×8 XOR sprites through the $5808–$5810 register block)
+- ☑ 2bpp color mode (selected via `$5804` high bit)
+- ☑ Save states (`.vst` files, the console save/load buttons)
+- ☑ Demo: banks — two-bank cartridge auto-toggling through $5806, dispatcher in RAM
+- ☑ In-browser assembler: paste source, run — no toolchain install
 
 *This list is the living roadmap — [ROADMAP.md](ROADMAP.md) is the canonical copy.*
 
@@ -83,9 +84,25 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
 | $5802    | frame counter (u16 LE, $5802/$5803) | — |
 | $5804    | palette select  | palette select   |
 | $5805    | LFSR random (read steps it) | —   |
-| $5807    | beeper period (0 = silence) | beeper period |
 | $5806    | current bank    | select bank for $E000–$FFFF |
 | $5807    | beeper period (0 = silence) | beeper period |
+| $5808–$5810 | sprite latches (x, y, ptr lo/hi per sprite; $5810 ctrl) | same |
+
+## Software
+
+- `software/hello.s` — banner text via an 8×8 font table
+- `software/snake.s` — playable snake on the 256×192 playfield (arrows/wasd)
+- `software/cube.s` — a rotating 3D wireframe cube: rotation-matrix table,
+  12 Bresenham lines, double-buffer clean-frame erase
+- `software/cube_table.py` — generates the 12-edge vertex table per phase
+- `software/tune.s` — a 32-note beeper melody: a period table indexed per
+  note, frame-paced through $5807 (the console plays actual audio)
+- `software/breakout.s` — playable breakout: 32 bricks as bitmask bytes, a
+  sliding 32-px paddle, a 2×2 ball with wall/paddle/brick bounces, and a
+  per-event beeper blip decaying through $5807
+- `software/banks.s` — two-bank cartridge showcase: bank 0 draws vertical
+  bars, bank 1 horizontal bars, and a RAM dispatcher flips the bank through
+  $5806 every 128 frames
 
 ## Software
 
