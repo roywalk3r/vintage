@@ -102,7 +102,7 @@ interface VintageApi {
 }
 
 
-const WASM_URL = "/vintage.wasm";
+const WASM_URL = "./vintage.wasm";
 // Phosphor presets for $5804, matching the headless PPM renderer in main.rs.
 const PALETTES: { fg: [number, number, number]; bg: [number, number, number] }[] = [
   { fg: [51, 255, 51], bg: [6, 12, 6] },      // $5804 = 0: green
@@ -143,7 +143,7 @@ async function main() {
   const ctx = canvas.getContext("2d")!;
   fbImage = ctx.createImageData(W, H);
 
-  const resp = await fetch("/demos/cube.vin");
+  const resp = await fetch("./demos/cube.vin");
   loadRom(parseVin(await resp.arrayBuffer()));
   bindUi(ctx);
   requestAnimationFrame(tick);
@@ -343,7 +343,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     b.className = "romBtn";
     b.textContent = n;
     b.addEventListener("click", async () => {
-      const r = await fetch(`/demos/${n}.vin`);
+      const r = await fetch(`./demos/${n}.vin`);
       loadRom(parseVin(await r.arrayBuffer()));
       markActive(b);
     });

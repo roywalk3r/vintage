@@ -137,6 +137,10 @@ cp target/wasm32-unknown-unknown/release/vintage.wasm console/public/
 (cd console && npm install && npm run dev)
 ```
 
+Live console: https://roywalk3r.github.io/vintage/ (deployed from
+`console/dist` to the `gh-pages` branch; rebuild with
+`npm run build -- --base=./` and re-publish the snapshot).
+
 ## Verification
 
 - Klaus Dormann functional test reaches the success trap (test klaus.rs)
