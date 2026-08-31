@@ -45,6 +45,15 @@ pub struct Machine {
     beeper_period: u8,
     /// Vsync IRQ latch: raised at frame start, taken (or masked out) once.
     vsync_pending: bool,
+    /// Sprite latches. Patterns are 8 bytes fetched through the bus from
+    /// `spr_ptr`, XORed into the display buffer at vsync.
+    spr_x: [u8; 2],
+    spr_y: [u8; 2],
+    spr_ptr: [u16; 2],
+    spr_ctrl: u8,
+    /// What hosts render: the fb with sprites XOR-composited at vsync.
+    /// The fb itself stays background-only; not CPU-visible.
+    disp: [u8; FB_LEN as usize],
 }
 
 impl Machine {
@@ -67,6 +76,11 @@ impl Machine {
             lfsr: Cell::new(0xACE1),
             beeper_period: 0,
             vsync_pending: false,
+            spr_x: [0; 2],
+            spr_y: [0; 2],
+            spr_ptr: [0; 2],
+            spr_ctrl: 0,
+            disp: [0; FB_LEN as usize],
         }
     }
 
@@ -98,13 +112,44 @@ impl Machine {
             budget = budget.saturating_sub(spent);
         }
         cpu.irq_line = false;
+        self.compose_sprites();
         self.tick_frame();
     }
 
+    /// XOR-composite the two sprites over a fresh copy of the framebuffer.
+    /// The fb stays background-only, so a sprite that holds position across
+    /// frames does not blink; software always sees the background plane.
+    fn compose_sprites(&mut self) {
+        self.disp.copy_from_slice(&self.fb);
+        for s in 0..2 {
+            if self.spr_ctrl & (1 << s) == 0 {
+                continue;
+            }
+            for row in 0..8u16 {
+                let y = self.spr_y[s] as usize + row as usize;
+                if y >= SCREEN_H {
+                    continue;
+                }
+                let bits = self.read(self.spr_ptr[s] + row);
+                for bit in 0..8 {
+                    if bits & (0x80 >> bit) == 0 {
+                        continue;
+                    }
+                    let x = self.spr_x[s] as usize + bit;
+                    if x >= SCREEN_W {
+                        continue;
+                    }
+                    let idx = y * 32 + (x >> 3);
+                    self.disp[idx] ^= 0x80 >> (x & 7);
+                }
+            }
+        }
+    }
+
     /// The framebuffer as the host renderer sees it: 6144 bytes, one bit per
-    /// pixel, MSB leftmost, 32 bytes per scanline.
+    /// pixel, MSB leftmost, 32 bytes per scanline, sprites composited.
     pub fn fb(&self) -> &[u8; FB_LEN as usize] {
-        &self.fb
+        &self.disp
     }
 
     pub fn palette(&self) -> u8 {
@@ -140,6 +185,16 @@ impl Bus for Machine {
             0x5805 => self.rand(),
             0x5806 => self.bank_sel as u8,
             0x5807 => self.beeper_period,
+            0x5808..=0x580F => {
+                let s = (addr >> 2) as usize & 1;
+                match addr & 3 {
+                    0 => self.spr_x[s],
+                    1 => self.spr_y[s],
+                    2 => self.spr_ptr[s] as u8,
+                    _ => (self.spr_ptr[s] >> 8) as u8,
+                }
+            }
+            0x5810 => self.spr_ctrl,
             0x6000..=0xDFFF => self.ram_hi[(addr - 0x6000) as usize],
             0xE000..=0xFFFF => self.banks[self.bank_sel][(addr - 0xE000) as usize],
             _ => 0,
@@ -149,6 +204,16 @@ impl Bus for Machine {
         match addr {
             0x0000..=0x3FFF => self.ram_lo[addr as usize] = val,
             0x4000..=0x57FF => self.fb[(addr - FB_BASE) as usize] = val,
+            0x5808..=0x580F => {
+                let s = (addr >> 2) as usize & 1;
+                match addr & 3 {
+                    0 => self.spr_x[s] = val,
+                    1 => self.spr_y[s] = val,
+                    2 => self.spr_ptr[s] = (self.spr_ptr[s] & 0xFF00) | val as u16,
+                    _ => self.spr_ptr[s] = (self.spr_ptr[s] & 0x00FF) | ((val as u16) << 8),
+                }
+            }
+            0x5810 => self.spr_ctrl = val,
             0x5804 => self.palette = val,
             0x5806 => {
                 if (val as usize) < self.banks.len() {
@@ -211,10 +276,16 @@ mod tests {
 
     #[test]
     fn framebuffer_is_memory_mapped() {
-        let mut m = machine();
+        let mut m = Machine::new([0xEA; 0x2000]);
         m.write(0x4000, 0xFF);
         m.write(0x57FF, 0x81);
         assert_eq!(m.read(0x4000), 0xFF);
+        assert_eq!(m.read(0x57FF), 0x81);
+        // fb() is the display plane: the fb is copied into it at each vsync
+        // by compose_sprites, so one run_frame makes the writes visible.
+        let mut cpu = Cpu::new();
+        cpu.reset(&mut m);
+        m.run_frame(&mut cpu);
         assert_eq!(m.fb()[0], 0xFF);
         assert_eq!(m.fb()[FB_LEN as usize - 1], 0x81);
     }

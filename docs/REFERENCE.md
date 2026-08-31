@@ -35,6 +35,19 @@ and drops writes.
 | `$5805` | RANDOM  | R   | 16-bit Galois LFSR (taps 0x002D); **every read steps it** |
 | `$5806` | BANK    | R/W | current cartridge bank (0–255). Writing a value **and the next fetch already comes from the new bank**; continuation code must exist in the target bank at the same PC, or execution must jump before switching. Read returns the current bank. The window stays write-protected. |
 | `$5807` | BEEPER  | R/W | square-wave half-period in CPU cycles; **0 = silence**. Frequency = 120,000 / (2 × period) Hz. |
+| `$5808/$5809` | SPR0_X/Y | R/W | sprite 0 position, 0-based top-left pixel |
+| `$580A/$580B` | SPR0_PAT | R/W | sprite 0 pattern pointer (lo/hi); 8 pattern bytes are **fetched through the bus** at vsync — one byte per row, MSB leftmost |
+| `$580C/$580D` | SPR1_X/Y | R/W | sprite 1 x/y latches |
+| `$580E/$580F` | SPR1_PAT | R/W | sprite 1 pattern pointer |
+| `$5810` | SPR_CTRL | R/W | bit 0 enables sprite 0, bit 1 enables sprite 1 |
+
+Sprite composition: at each vsync the host composits both sprites over a
+fresh copy of the framebuffer — set bit = XOR. The fb itself stays
+background-only (not modified by sprites, so a static sprite never blinks),
+and `fb()` — what hosts render — is the composited result. Sprites clip at
+the screen edges (x ≥ 256, y ≥ 192): no wraparound. Pattern rows beyond the
+sprite's 8 bytes? None: patterns are exactly 8 bytes, fetched through the
+bus so a sprite can be defined anywhere (RAM or ROM).
 
 ## Assembler dialect
 
