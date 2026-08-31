@@ -31,7 +31,7 @@ and drops writes.
 | `$5800` | KEY     | R   | Latest keypress, **read clears**. Codes: `$11` up, `$12` down, `$13` left, `$14` right. |
 | `$5802` | FRAME   | R   | frame counter, low byte (wraps after ~18 min at 60 Hz) |
 | `$5803` | FRAME+1 | R   | frame counter, high byte |
-| `$5804` | PALETTE | R/W | phosphor color: 0 = green, 1 = amber, 2 = white |
+| `$5804` | PALETTE | R/W | bit 7 = 0: 1bpp, low bits select phosphor color (0 = green, 1 = amber, 2 = white). bit 7 = 1: **2bpp color mode** — 128×192 fat pixels, 4 per byte; low 2 bits select the four-color scheme (0 = green, 1 = amber, 2 = white, 3 = mixed). |
 | `$5805` | RANDOM  | R   | 16-bit Galois LFSR (taps 0x002D); **every read steps it** |
 | `$5806` | BANK    | R/W | current cartridge bank (0–255). Writing a value **and the next fetch already comes from the new bank**; continuation code must exist in the target bank at the same PC, or execution must jump before switching. Read returns the current bank. The window stays write-protected. |
 | `$5807` | BEEPER  | R/W | square-wave half-period in CPU cycles; **0 = silence**. Frequency = 120,000 / (2 × period) Hz. |
@@ -44,10 +44,12 @@ and drops writes.
 Sprite composition: at each vsync the host composits both sprites over a
 fresh copy of the framebuffer — set bit = XOR. The fb itself stays
 background-only (not modified by sprites, so a static sprite never blinks),
-and `fb()` — what hosts render — is the composited result. Sprites clip at
-the screen edges (x ≥ 256, y ≥ 192): no wraparound. Pattern rows beyond the
-sprite's 8 bytes? None: patterns are exactly 8 bytes, fetched through the
-bus so a sprite can be defined anywhere (RAM or ROM).
+and `fb()` — what hosts render — is the composited result. In 2bpp a sprite
+hit **inverts** the covered fat pixel's palette index (index ^= 3), so
+sprites display brightest. Sprites clip at the video edges (x ≥ 128 fat
+pixels in 2bpp, x ≥ 256 in 1bpp; y ≥ 192): no wraparound. Patterns are
+exactly 8 bytes, fetched through the bus so a sprite can be defined
+anywhere (RAM or ROM).
 
 ## Assembler dialect
 

@@ -66,6 +66,15 @@ const PALETTES: { fg: [number, number, number]; bg: [number, number, number] }[]
   { fg: [230, 230, 230], bg: [10, 10, 10] },  // $5804 = 2: white
 ];
 
+// 2bpp color schemes for $5804 with bit 7 set, per fat-pixel index 0..3.
+// Scheme 3 mixes the phosphor family; the ramps shade within one phosphor.
+const SCHEMES: [number, number, number][][] = [
+  [[6, 12, 6], [26, 102, 26], [51, 153, 51], [51, 255, 51]],
+  [[16, 12, 0], [102, 61, 0], [153, 94, 0], [255, 176, 0]],
+  [[10, 10, 10], [58, 58, 58], [120, 120, 120], [230, 230, 230]],
+  [[6, 12, 6], [51, 255, 51], [255, 176, 0], [230, 230, 230]],
+];
+
 let api: VintageApi;
 let heap: Uint8Array;
 let fbImage: ImageData;
@@ -187,7 +196,27 @@ function audioFrame() {
 
 function blit() {
   const fb = new Uint8Array(api.memory.buffer, api.vin_fb_ptr(), 0x1800);
-  const { fg, bg } = PALETTES[api.vin_palette() % PALETTES.length];
+  const pal = api.vin_palette();
+  if (pal & 0x80) {
+    // 2bpp: 4 fat pixels per byte, MSB pair leftmost; the machine's display
+    // plane already holds the sprite-inverted indices.
+    const scheme = SCHEMES[pal & 3];
+    const px = fbImage.data;
+    let di = 0;
+    for (let i = 0; i < 0x1800; i++) {
+      const b = fb[i];
+      for (let p = 3; p >= 0; p--) {
+        const c = scheme[(b >> (2 * p)) & 3];
+        px[di++] = c[0];
+        px[di++] = c[1];
+        px[di++] = c[2];
+        px[di++] = 255;
+      }
+    }
+    ctxRef.putImageData(fbImage, 0, 0);
+    return;
+  }
+  const { fg, bg } = PALETTES[pal % PALETTES.length];
   const px = fbImage.data;
   let di = 0;
   for (let i = 0; i < 0x1800; i++) {

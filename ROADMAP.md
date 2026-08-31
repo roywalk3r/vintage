@@ -24,6 +24,6 @@
 - ☑ Banked ROM / multi-bank cartridge format (V1B container, $5806 bank register)
 - ☑ Hardware interrupts: maskable vsync IRQ through $FFFE (NMI reserved)
 - ☑ Sprite unit (two 8×8 XOR sprites through the $5808–$5810 register block)
-- ☐ 2bpp color mode (selected via `$5804` high bit)
+- ☑ 2bpp color mode (`$5804` bit 7: 128×192 fat pixels, 4-color schemes)
 - ☐ Save states (`.vst` files, console load/save)
 - ☐ In-browser assembler: paste source, run — no toolchain install

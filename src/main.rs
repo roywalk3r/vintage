@@ -222,12 +222,12 @@ fn copy_bank_segment(img: &mut [u8; 0x2000], addr: u16, bytes: &[u8]) -> Result<
 }
 
 /// Phosphor palettes: (on-colour, off-colour) RGB triples.
-fn palette(p: u8) -> ([(u8, u8, u8); 2], u8) {
-    const MAX: u8 = 3;
-    match p % MAX {
-        0 => ([(51, 255, 51), (6, 12, 6)], 255),
-        1 => ([(255, 176, 0), (16, 12, 0)], 255),
-        _ => ([(230, 230, 230), (10, 10, 10)], 230),
+fn palette(p: u8) -> ([(u8, u8, u8); 4], u8) {
+    match p & 3 {
+        0 => ([(6, 12, 6), (14, 51, 14), (26, 102, 26), (51, 255, 51)], 255),
+        1 => ([(16, 12, 0), (102, 61, 0), (153, 94, 0), (255, 176, 0)], 255),
+        2 => ([(10, 10, 10), (58, 58, 58), (120, 120, 120), (230, 230, 230)], 230),
+        _ => ([(6, 12, 6), (51, 255, 51), (255, 176, 0), (230, 230, 230)], 230),
     }
 }
 
@@ -235,9 +235,18 @@ fn write_ppm(path: &Path, fb: &[u8], p: u8) -> std::io::Result<()> {
     let (colors, maxval) = palette(p);
     let mut out = format!("P6\n256 192\n{maxval}\n").into_bytes();
     out.reserve(256 * 192 * 3);
+    if p & 0x80 != 0 {
+        for &byte in fb {
+            for p in (0..4).rev() {
+                let c = colors[usize::from((byte >> (2 * p)) & 3)];
+                out.extend_from_slice(&[c.0, c.1, c.2]);
+            }
+        }
+        return fs::write(path, out);
+    }
     for &byte in fb {
         for bit in (0..8).rev() {
-            let c = colors[usize::from((byte >> bit) & 1 == 0)];
+            let c = if (byte >> bit) & 1 != 0 { colors[3] } else { colors[0] };
             out.extend_from_slice(&[c.0, c.1, c.2]);
         }
     }
