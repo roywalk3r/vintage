@@ -144,7 +144,7 @@ pub extern "C" fn vin_cpu_reset() {
     }
 }
 
-/// Snapshot [a, x, y, s, pc_lo, pc_hi, flags, cycles_lo] for the JS debugger.
+/// Snapshot [a, x, y, s, pc_lo, pc_hi, flags, cycles_lsb] for the JS debugger.
 #[unsafe(no_mangle)]
 pub extern "C" fn vin_cpu_state_ptr() -> *const u8 {
     static mut STATE: [u8; 8] = [0; 8];
@@ -159,5 +159,48 @@ pub extern "C" fn vin_cpu_state_ptr() -> *const u8 {
         STATE[6] = cpu.p;
         STATE[7] = (cpu.cycles & 0xFF) as u8;
         (&raw const STATE).cast()
+    }
+}
+
+/// Full-machine save state (.vst). It is parked in a scratch Vec because it
+/// is ~63 KB: JS copies it out through linear memory in one go.
+static mut SCRATCH: Vec<u8> = Vec::new();
+
+/// Serialize the live machine + CPU. Call vin_save_ptr() after this to get
+/// the bytes' location.
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_save_state() -> usize {
+    unsafe {
+        let s = m().save_state(c());
+        let slot = (&raw mut SCRATCH).cast::<Vec<u8>>();
+        (*slot).clear();
+        (*slot).extend_from_slice(&s);
+        s.len()
+    }
+}
+
+/// Pointer to the bytes written by the last vin_save_state() call.
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_save_ptr() -> *const u8 {
+    unsafe {
+        let slot = (&raw mut SCRATCH).cast::<Vec<u8>>();
+        (*slot).as_ptr()
+    }
+}
+
+/// Restore the live machine + CPU from a .vst image at `ptr`. Returns 1 on
+/// success, 0 on any parse error (the image is rejected before any field is
+/// assigned, so a bad file never half-restores).
+#[unsafe(no_mangle)]
+// Clippy can't see the JS-side invariant that `ptr` is a live heap slice.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn vin_load_state(ptr: *const u8, len: usize) -> u8 {
+    if ptr.is_null() {
+        return 0;
+    }
+    let data = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match m().restore_state(c(), data) {
+        Ok(()) => 1,
+        Err(_) => 0,
     }
 }

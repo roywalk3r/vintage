@@ -100,6 +100,7 @@ main { display: flex; gap: 1.5rem; }
   cursor: pointer;
 }
 #file { display: none; }
+#vst-file { display: none; }
 #cpu { font-size: 0.72rem; line-height: 1.5; min-height: 7em; color: var(--hot); }
 #cyc { font-size: 0.65rem; line-height: 1.5; color: var(--dim); margin-top: 0.4rem; }
 .btns { display: flex; gap: 0.4rem; margin-top: 0.5rem; }

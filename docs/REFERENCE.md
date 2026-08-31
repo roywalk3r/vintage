@@ -104,3 +104,14 @@ Banked cartridges use **V1B**: same `V1` prefix, third byte `'B'`, a u16
 bank count, then per bank the same segment list as V1 (bank 0 first). The
 console and `vintage run` load every bank into the cartridge; `$5806` picks
 the visible one. `vintage asm` picks the container flavor automatically.
+
+## Save states
+
+`save .vst` / `load .vst` in the console produce and consume **.vst files**:
+`V1S` magic, then CPU registers (A, X, Y, S, P, PC, cycle count), the full
+54 KB of RAM (both planes), the 6K framebuffer, the cartridge banks, bank
+select, sprite latches + ctrl, frame counter, palette, LFSR seed, beeper
+period, pending key, and the vsync latch. The banked RAM is included, so a
+`.vst` is a self-contained resumable machine: load it into the console with
+no companion ROM. Execution resumes cycle-exact. A malformed file is
+rejected before any field is assigned — it can never half-restore.

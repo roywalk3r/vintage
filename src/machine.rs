@@ -121,6 +121,7 @@ impl Machine {
     /// frames does not blink; software always sees the background plane.
     fn compose_sprites(&mut self) {
         self.disp.copy_from_slice(&self.fb);
+        let two = self.palette & 0x80 != 0;
         for s in 0..2 {
             if self.spr_ctrl & (1 << s) == 0 {
                 continue;
@@ -131,16 +132,26 @@ impl Machine {
                     continue;
                 }
                 let bits = self.read(self.spr_ptr[s] + row);
-                for bit in 0..8 {
+                for bit in 0..8u16 {
                     if bits & (0x80 >> bit) == 0 {
                         continue;
                     }
-                    let x = self.spr_x[s] as usize + bit;
-                    if x >= SCREEN_W {
-                        continue;
+                    let x = self.spr_x[s] as usize + bit as usize;
+                    if two {
+                        // 2bpp: 4 fat pixels per byte; a hit inverts the
+                        // pixel's 2-bit index so it displays brightest.
+                        if x >= 128 {
+                            continue;
+                        }
+                        let idx = y * 32 + (x >> 2);
+                        self.disp[idx] ^= 0xC0 >> (2 * (x & 3));
+                    } else {
+                        if x >= SCREEN_W {
+                            continue;
+                        }
+                        let idx = y * 32 + (x >> 3);
+                        self.disp[idx] ^= 0x80 >> (x & 7);
                     }
-                    let idx = y * 32 + (x >> 3);
-                    self.disp[idx] ^= 0x80 >> (x & 7);
                 }
             }
         }
@@ -160,12 +171,160 @@ impl Machine {
         self.beeper_period
     }
 
+    // ------------------------------------------------------------------
+    // .vst save states
+    //
+    // Image layout (little-endian throughout):
+    //   "V1S" | a x y s p | pc:2 | cycles:8
+    //   | ram_lo:16K | fb:6K | ram_hi:32K
+    //   | n_banks:2 | banks: n×8K | bank_sel:1
+    //   | spr_x:2 | spr_y:2 | spr_ptr:4 | spr_ctrl:1
+    //   | frame:2 | palette:1 | lfsr:2 | beeper:1 | key:1 | vsync:1
+    //
+    // `disp` is not stored: compose_sprites() rebuilds it on load, so a
+    // restore is pixel-identical before the next run_frame.
+
+    /// Serialize the machine plus its CPU into a `.vst` image. The cartridge
+    /// banks are embedded, so the file restores with no companion ROM.
+    pub fn save_state(&self, cpu: &Cpu) -> Vec<u8> {
+        let mut out =
+            Vec::with_capacity(3 + 15 + 0x4000 + 0x1800 + 0x8000 + 2 + self.banks.len() * 0x2000 + 18);
+        out.extend_from_slice(b"V1S");
+        out.extend_from_slice(&[cpu.a, cpu.x, cpu.y, cpu.s, cpu.p]);
+        out.extend_from_slice(&cpu.pc.to_le_bytes());
+        out.extend_from_slice(&cpu.cycles.to_le_bytes());
+        out.extend_from_slice(&self.ram_lo);
+        out.extend_from_slice(&self.fb);
+        out.extend_from_slice(&self.ram_hi);
+        out.extend_from_slice(&(self.banks.len() as u16).to_le_bytes());
+        for bank in &self.banks {
+            out.extend_from_slice(bank);
+        }
+        out.push(self.bank_sel as u8);
+        out.extend_from_slice(&self.spr_x);
+        out.extend_from_slice(&self.spr_y);
+        for p in &self.spr_ptr {
+            out.extend_from_slice(&p.to_le_bytes());
+        }
+        out.push(self.spr_ctrl);
+        out.extend_from_slice(&self.frame.to_le_bytes());
+        out.push(self.palette);
+        out.extend_from_slice(&self.lfsr.get().to_le_bytes());
+        out.push(self.beeper_period);
+        out.push(self.key_pending.get());
+        out.push(self.vsync_pending as u8);
+        out
+    }
+
+    /// Overwrite this machine (memory, registers, cartridge banks) and `cpu`
+    /// from a `.vst` image. Strict parsing: truncation anywhere, a bad magic,
+    /// or trailing bytes are all errors.
+    pub fn restore_state(&mut self, cpu: &mut Cpu, data: &[u8]) -> Result<(), String> {
+        // Fixed-size layout: peek the bank count at offset 55314 and verify
+        // the exact image length BEFORE any field is assigned, so a corrupt
+        // file can never leave a half-restored machine behind.
+        let hdr = 18 + 0x4000 + 0x1800 + 0x8000;
+        if data.len() < hdr + 2 {
+            return Err("truncated .vst".into());
+        }
+        if &data[..3] != b"V1S" {
+            return Err("bad magic".into());
+        }
+        let nbanks = u16::from_le_bytes(data[hdr..hdr + 2].try_into().unwrap()) as usize;
+        if nbanks == 0 || nbanks > 256 {
+            return Err(format!("bad bank count {nbanks}"));
+        }
+        if data.len() != 55_334 + 8192 * nbanks {
+            return Err(format!("bad .vst length for {nbanks} bank(s)"));
+        }
+        let mut r = Reader::new(data);
+        if r.take(3)? != b"V1S" {
+            return Err("bad magic".into());
+        }
+        cpu.a = r.byte()?;
+        cpu.x = r.byte()?;
+        cpu.y = r.byte()?;
+        cpu.s = r.byte()?;
+        cpu.p = r.byte()?;
+        cpu.pc = r.u16()?;
+        cpu.cycles = r.u64()?;
+        self.ram_lo = r.array()?;
+        self.fb = r.array()?;
+        self.ram_hi = r.array()?;
+        let nbanks = r.u16()? as usize;
+        if nbanks == 0 || nbanks > 256 {
+            return Err(format!("bad bank count {nbanks}"));
+        }
+        let mut banks = Vec::with_capacity(nbanks);
+        for _ in 0..nbanks {
+            banks.push(r.array::<0x2000>()?);
+        }
+        self.banks = banks;
+        self.bank_sel = (r.byte()? as usize).min(self.banks.len() - 1);
+        self.spr_x = [r.byte()?, r.byte()?];
+        self.spr_y = [r.byte()?, r.byte()?];
+        for p in &mut self.spr_ptr {
+            *p = r.u16()?;
+        }
+        self.spr_ctrl = r.byte()?;
+        self.frame = r.u16()?;
+        self.palette = r.byte()?;
+        self.lfsr = Cell::new(r.u16()?);
+        self.beeper_period = r.byte()?;
+        self.key_pending = Cell::new(r.byte()?);
+        self.vsync_pending = r.byte()? != 0;
+        if r.pos != data.len() {
+            return Err("trailing bytes".into());
+        }
+        self.compose_sprites();
+        Ok(())
+    }
+
     /// 16-bit Galois LFSR, taps 0x002D — every read steps it.
     fn rand(&self) -> u8 {
         let mut l = self.lfsr.get();
         l = (l >> 1) ^ (0x002D * (l & 1));
         self.lfsr.set(l);
         l as u8
+    }
+}
+
+/// Bounds-checked cursor over a `.vst` image. Every accessor validates the
+/// length, so truncation at any point surfaces as one error.
+struct Reader<'a> {
+    d: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(d: &'a [u8]) -> Self {
+        Self { d, pos: 0 }
+    }
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        if self.pos + n > self.d.len() {
+            return Err("truncated .vst".into());
+        }
+        let s = &self.d[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(s)
+    }
+    fn byte(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?.first().copied().unwrap_or(0))
+    }
+    fn u16(&mut self) -> Result<u16, String> {
+        let mut b = [0u8; 2];
+        b.copy_from_slice(self.take(2)?);
+        Ok(u16::from_le_bytes(b))
+    }
+    fn u64(&mut self) -> Result<u64, String> {
+        let mut b = [0u8; 8];
+        b.copy_from_slice(self.take(8)?);
+        Ok(u64::from_le_bytes(b))
+    }
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        let mut a = [0u8; N];
+        a.copy_from_slice(self.take(N)?);
+        Ok(a)
     }
 }
 

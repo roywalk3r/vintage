@@ -55,6 +55,9 @@ interface VintageApi {
   vin_wr(a: number, v: number): void;
   vin_cpu_state_ptr(): number;
   vin_cycles(): number;
+  vin_save_state(): number;
+  vin_save_ptr(): number;
+  vin_load_state(p: number, len: number): number;
 }
 
 
@@ -105,13 +108,19 @@ async function main() {
   requestAnimationFrame(tick);
 }
 
-function loadRom(vin: Vin) {
+// Grow wasm linear memory until `base + bytes` fits, then refresh the heap
+// view. Returns the base pointer for staging bytes before a handoff call.
+function ensureHeap(bytes: number): number {
   const base = basePtr();
-  const total = (vin.banks.length + 1) * 0x2000;
-  if (base + total > api.memory.buffer.byteLength) {
-    api.memory.grow(1);
-  }
+  const need = base + bytes - api.memory.buffer.byteLength;
+  if (need > 0) api.memory.grow(Math.ceil(need / 65536));
   heap = new Uint8Array(api.memory.buffer);
+  return base;
+}
+
+function loadRom(vin: Vin) {
+  const total = (vin.banks.length + 1) * 0x2000;
+  const base = ensureHeap(total);
   const flat = new Uint8Array(total);
   flat.set(vin.rom, 0);
   vin.banks.forEach((b, i) => flat.set(b, (i + 1) * 0x2000));
@@ -302,6 +311,36 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     const f = fileInput.files![0];
     if (!f) return;
     loadRom(parseVin(await f.arrayBuffer()));
+  });
+
+  // Save states: a .vst is a self-contained machine image — it includes the
+  // cartridge banks, so it restores with no companion ROM needed.
+  const save = () => {
+    const n = api.vin_save_state();
+    heap = new Uint8Array(api.memory.buffer); // fresh view: save allocated
+    const p = api.vin_save_ptr();
+    const bytes = heap.slice(p, p + n);
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    a.href = url;
+    a.download = "vintage.vst";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    (document.getElementById("vst-msg") as HTMLElement).textContent =
+      `saved ${n.toLocaleString()} bytes`;
+  };
+  document.getElementById("save")!.addEventListener("click", save);
+  const vstFile = document.getElementById("vst-file") as HTMLInputElement;
+  document.getElementById("loadstate")!.addEventListener("click", () => vstFile.click());
+  vstFile.addEventListener("change", async () => {
+    const f = vstFile.files![0];
+    if (!f) return;
+    const vst = new Uint8Array(await f.arrayBuffer());
+    const base = ensureHeap(vst.length);
+    heap.set(vst, base);
+    const ok = api.vin_load_state(base, vst.length);
+    (document.getElementById("vst-msg") as HTMLElement).textContent =
+      ok ? `state loaded (${vst.length.toLocaleString()} bytes)` : "not a .vst file";
   });
 }
 
