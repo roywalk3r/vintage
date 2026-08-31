@@ -29,3 +29,4 @@
 - ☑ In-browser assembler: paste source, run — no toolchain install
 - ☑ Demo: banks - two-bank cartridge auto-toggling through $5806, dispatcher resident in RAM
 - ☑ Demo/app: calc — a 16-bit integer calculator, the first VINTAGE-1 application (headless-tested through its $2010 ASCII display mirror)
+- ☑ Demo/app: editor - an 8-line x 28-column text editor with a blinking cursor, insert/backspace/motion, headless-tested through its $1000 text block

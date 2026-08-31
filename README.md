@@ -107,6 +107,11 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
   clamp, left-to-right + - * / chaining, =/Enter to compute, C clears,
   Backspace rubs out a digit, ERR on division by zero. The display field is
   mirrored as ASCII at $2010 for tooling and headless tests.
+- `software/editor.s` — an 8-line × 28-column scratchpad text editor:
+  blinking cursor, arrows/wasd move, printable keys insert, Backspace
+  deletes, Enter drops a line. Insert space-pads the gap to a kept column
+  so lines stay one NUL-terminated string; text lives at $1000 as 8×29
+  bytes for headless tests.
 
 ## Build & Run
 
@@ -114,7 +119,7 @@ Prereqs: Rust (stable + wasm32-unknown-unknown), node ≥ 18.
 
 ```bash
 # CLI + emulator toolchain
-cargo test                       # 86 tests (unit + integration), Klaus gate included
+cargo test                       # 120 tests (unit + integration), Klaus gate included
 cargo run -- cube.s --frames 120 # run a demo for 2 seconds, PPM to stdout
 cargo run -- asm software/cube.s -o cube.vin
 cargo run -- disasm cube.vin
