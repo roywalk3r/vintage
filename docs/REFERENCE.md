@@ -14,8 +14,12 @@ the assembler dialect, program shapes, and the toolchain.
 | `$E000–$FFFF`  | ROM window (8K; a banked cartridge maps one of N 8K banks here, vectors at the top)  |
 
 Frame timing: **2 MHz → 33,333 cycles/frame @ 60 Hz**. The host runs
-`run_frame` once per video frame; a game loop must either rely on the frame
-counter for pacing or spend the full budget in `run_frame`.
+`run_frame` at vsync: a **maskable IRQ** is latched once per frame and taken
+at the first instruction boundary with I clear (vector `$FFFE`; the handler
+runs with I set and `rti` restores the interrupted context). A program
+holding `sei` never sees the pulse, and it is not re-issued later in the
+frame. Programs without `cli` never notice; all demos ship with I set.
+There is no NMI source.
 
 ## I/O bank ($5800–$5FFF)
 

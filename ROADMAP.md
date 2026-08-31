@@ -22,7 +22,7 @@
 - ☑ Demo: breakout — the first demo combining input + video + sound
 - ☑ Per-demo cycle accounting in the console
 - ☑ Banked ROM / multi-bank cartridge format (V1B container, $5806 bank register)
-- ☐ Hardware interrupts: NMI/IRQ vectors wired to vsync
+- ☑ Hardware interrupts: maskable vsync IRQ through $FFFE (NMI reserved)
 - ☐ Sprite unit (2 hardware sprites with x/y latches)
 - ☐ 2bpp color mode (selected via `$5804` high bit)
 - ☐ Save states (`.vst` files, console load/save)
