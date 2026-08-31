@@ -5,7 +5,7 @@
 //! VINTAGE-1 console front-end: loads the wasm core, parses .vin ROMs,
 //! drives run_frame per animation tick, blits the 1-bit framebuffer.
 
-type Vin = { rom: Uint8Array };
+type Vin = { rom: Uint8Array; banks: Uint8Array[] };
 
 const W = 256;
 const H = 192;
@@ -14,17 +14,24 @@ function parseVin(buf: ArrayBuffer): Vin {
   const d = new DataView(buf);
   const magic = String.fromCharCode(d.getUint8(0), d.getUint8(1));
   if (magic !== "V1") throw new Error("bad magic");
-  const nseg = d.getUint16(2, true);
-  const rom = new Uint8Array(0x2000);
-  let off = 4;
-  for (let i = 0; i < nseg; i++) {
-    const addr = d.getUint16(off, true);
-    const len = d.getUint16(off + 2, true);
-    off += 4;
-    rom.set(new Uint8Array(buf, off, len), addr - 0xe000);
-    off += len;
+  // V1B shares the "V1" prefix; byte 2 == 'B' switches to the banked layout.
+  const banked = d.getUint8(2) === 0x42;
+  const banks: Uint8Array[] = [];
+  let off = banked ? 5 : 4;
+  const nbanks = banked ? d.getUint16(3, true) : 1;
+  for (let b = 0; b < nbanks; b++) {
+    const nseg = banked ? d.getUint16(off, true) : d.getUint16(2, true);
+    const rom = new Uint8Array(0x2000);
+    for (let i = 0; i < nseg; i++) {
+      const addr = d.getUint16(off, true);
+      const len = d.getUint16(off + 2, true);
+      off += 4;
+      rom.set(new Uint8Array(buf, off, len), addr - 0xe000);
+      off += len;
+    }
+    banks.push(rom);
   }
-  return { rom };
+  return { rom: banks.shift()!, banks };
 }
 
 const KEYMAP: Record<string, number> = {
@@ -36,7 +43,7 @@ const KEYMAP: Record<string, number> = {
 interface VintageApi {
   memory: WebAssembly.Memory;
   vin_reset(): void;
-  vin_load_rom(p: number, n: number): void;
+  vin_load_banks(p: number, n: number): void;
   vin_cpu_reset(): void;
   vin_step(): number;
   vin_run_frame(): void;
@@ -91,12 +98,16 @@ async function main() {
 
 function loadRom(vin: Vin) {
   const base = basePtr();
-  if (base + vin.rom.length > api.memory.buffer.byteLength) {
+  const total = (vin.banks.length + 1) * 0x2000;
+  if (base + total > api.memory.buffer.byteLength) {
     api.memory.grow(1);
   }
   heap = new Uint8Array(api.memory.buffer);
-  heap.set(vin.rom, base);
-  api.vin_load_rom(base, 0x2000);
+  const flat = new Uint8Array(total);
+  flat.set(vin.rom, 0);
+  vin.banks.forEach((b, i) => flat.set(b, (i + 1) * 0x2000));
+  heap.set(flat, base);
+  api.vin_load_banks(base, vin.banks.length + 1);
   api.vin_cpu_reset();
   lastCycles = 0;
   cycWindow.fill(0);

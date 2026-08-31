@@ -63,6 +63,26 @@ pub extern "C" fn vin_load_rom(ptr: *const u8, len: usize) {
     }
 }
 
+/// Load a multi-bank cartridge: `nbanks` consecutive 8K images at `ptr`.
+/// Bank 0 boots; higher banks become visible through $5806.
+#[unsafe(no_mangle)]
+// Clippy can't see the JS-side invariant that `ptr` is a live heap slice.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn vin_load_banks(ptr: *const u8, nbanks: usize) {
+    if ptr.is_null() || nbanks == 0 || nbanks > 256 {
+        return;
+    }
+    unsafe {
+        let mut banks = Vec::with_capacity(nbanks);
+        for i in 0..nbanks {
+            let mut img = [0u8; 0x2000];
+            std::ptr::copy_nonoverlapping(ptr.add(i * 0x2000), img.as_mut_ptr(), 0x2000);
+            banks.push(img);
+        }
+        (&raw mut MACH).write_volatile(Some(Machine::with_banks(banks)));
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vin_step() -> u32 {
     c().step(m())
