@@ -622,6 +622,37 @@ fn flush_sink(
 }
 
 /// Parse `src` into a loadable binary. Fails with a 1-based line number.
+impl Binary {
+    /// Serialize as a `.vin` container: `V1` magic, u16 segment count, then
+    /// per segment `(addr:u16, len:u16, payload)` — or `V1B` + u16 bank
+    /// count + per bank the segment list when `.bank` directives produced
+    /// extra banks. Little-endian throughout.
+    pub fn to_container(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if self.extra_banks.is_empty() {
+            out.extend_from_slice(b"V1");
+            push_segs(&mut out, &self.segments);
+        } else {
+            out.extend_from_slice(b"V1B");
+            out.extend_from_slice(&((self.extra_banks.len() + 1) as u16).to_le_bytes());
+            push_segs(&mut out, &self.segments);
+            for bank in &self.extra_banks {
+                push_segs(&mut out, bank);
+            }
+        }
+        out
+    }
+}
+
+fn push_segs(out: &mut Vec<u8>, bank: &[(u16, Vec<u8>)]) {
+    out.extend_from_slice(&(bank.len() as u16).to_le_bytes());
+    for (addr, bytes) in bank {
+        out.extend_from_slice(&addr.to_le_bytes());
+        out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
+}
+
 pub fn assemble(src: &str) -> Result<Binary, Error> {
     // ---- parse all lines first; errors here need no symbol context
     let mut lines = Vec::new();
@@ -824,6 +855,24 @@ mod tests {
 
     fn asm(src: &str) -> Vec<u8> {
         assemble(src).unwrap().segments[0].1.clone()
+    }
+
+    #[test]
+    fn to_container_emits_v1_and_v1b() {
+        let single = assemble(".org $E000\nlda #0").unwrap();
+        let c = single.to_container();
+        assert_eq!(&c[0..2], b"V1", "V1 magic");
+        assert_eq!(c.len(), 2 + 2 + 4 + 2, "magic + segcount + header + payload");
+
+        let multi = assemble(
+            ".org $E000\njmp $E005\n.bank 1\n.org $E005\nlda #1",
+        )
+        .unwrap();
+        let c = multi.to_container();
+        assert_eq!(&c[0..3], b"V1B", "banked magic");
+        assert_eq!(&c[3..5], &[2, 0], "bank count");
+        // bank 0: u16 seg count then one (addr,len,payload) segment
+        assert_eq!(c.len(), 3 + 2 + 9 + 8, "magic + bankcount + two segment lists");
     }
 
     #[test]

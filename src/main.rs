@@ -118,36 +118,12 @@ fn cmd_asm(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// V1 container: magic "V1", u16 segment count, then per segment
-/// u16 address, u16 length, bytes. V1B adds cartridge banks: magic "V1B",
-/// u16 bank count, then per bank the same segment list as V1. Bank 0 first.
-/// All little-endian. Returns the bank count for the CLI's report line.
+/// Container bytes come from `Binary::to_container` (the one shared
+/// serializer — the console's in-browser assembler reads the same bytes).
+/// Returns the bank count for the CLI's report line.
 fn write_container(path: &Path, bin: &Binary) -> std::io::Result<usize> {
-    let mut banks: Vec<&Vec<(u16, Vec<u8>)>> = vec![&bin.segments];
-    banks.extend(bin.extra_banks.iter());
-    let mut out = Vec::new();
-    if banks.len() == 1 {
-        out.extend_from_slice(b"V1");
-        out.extend_from_slice(&(bin.segments.len() as u16).to_le_bytes());
-        push_segments(&mut out, &bin.segments);
-    } else {
-        out.extend_from_slice(b"V1B");
-        out.extend_from_slice(&(banks.len() as u16).to_le_bytes());
-        for bank in banks.iter() {
-            out.extend_from_slice(&(bank.len() as u16).to_le_bytes());
-            push_segments(&mut out, bank);
-        }
-    }
-    fs::write(path, out)?;
-    Ok(banks.len())
-}
-
-fn push_segments(out: &mut Vec<u8>, bank: &[(u16, Vec<u8>)]) {
-    for (addr, bytes) in bank {
-        out.extend_from_slice(&addr.to_le_bytes());
-        out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-        out.extend_from_slice(bytes);
-    }
+    fs::write(path, bin.to_container())?;
+    Ok(bin.extra_banks.len() + 1)
 }
 
 fn cmd_run(args: &[String]) -> Result<(), String> {

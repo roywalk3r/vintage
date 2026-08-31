@@ -165,6 +165,9 @@ pub extern "C" fn vin_cpu_state_ptr() -> *const u8 {
 /// Full-machine save state (.vst). It is parked in a scratch Vec because it
 /// is ~63 KB: JS copies it out through linear memory in one go.
 static mut SCRATCH: Vec<u8> = Vec::new();
+/// Assembler output and error text, parked the same way for JS.
+static mut ASM_OUT: Vec<u8> = Vec::new();
+static mut ASM_ERR: Vec<u8> = Vec::new();
 
 /// Serialize the live machine + CPU. Call vin_save_ptr() after this to get
 /// the bytes' location.
@@ -176,6 +179,71 @@ pub extern "C" fn vin_save_state() -> usize {
         (*slot).clear();
         (*slot).extend_from_slice(&s);
         s.len()
+    }
+}
+
+/// Assemble `len` bytes of 6502 source at `ptr`. Returns the `.vin`
+/// container length in bytes, or 0 on error — the message (with source line)
+/// is parked for vin_asm_err_ptr()/vin_asm_err_len().
+#[unsafe(no_mangle)]
+// Clippy can't see the JS-side invariant that `ptr` is a live heap slice.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn vin_asm(ptr: *const u8, len: usize) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let data = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let result = match std::str::from_utf8(data) {
+        Ok(src) => match crate::asm::assemble(src) {
+            Ok(bin) => Ok(bin.to_container()),
+            Err(e) => Err(format!("line {}: {}", e.line, e.msg)),
+        },
+        Err(_) => Err("source is not UTF-8".to_string()),
+    };
+    match result {
+        Ok(container) => {
+            let slot = (&raw mut ASM_OUT).cast::<Vec<u8>>();
+            unsafe {
+                (*slot).clear();
+                (*slot).extend_from_slice(&container);
+            }
+            container.len()
+        }
+        Err(msg) => {
+            let slot = (&raw mut ASM_ERR).cast::<Vec<u8>>();
+            unsafe {
+                (*slot).clear();
+                (*slot).extend_from_slice(msg.as_bytes());
+            }
+            0
+        }
+    }
+}
+
+/// Pointer to the container produced by the last successful vin_asm().
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_asm_ptr() -> *const u8 {
+    unsafe {
+        let slot = (&raw mut ASM_OUT).cast::<Vec<u8>>();
+        (*slot).as_ptr()
+    }
+}
+
+/// Pointer to the error text parked by the last failed vin_asm().
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_asm_err_ptr() -> *const u8 {
+    unsafe {
+        let slot = (&raw mut ASM_ERR).cast::<Vec<u8>>();
+        (*slot).as_ptr()
+    }
+}
+
+/// Length of the error text parked by the last failed vin_asm().
+#[unsafe(no_mangle)]
+pub extern "C" fn vin_asm_err_len() -> usize {
+    unsafe {
+        let slot = (&raw mut ASM_ERR).cast::<Vec<u8>>();
+        (*slot).len()
     }
 }
 

@@ -109,3 +109,15 @@ main { display: flex; gap: 1.5rem; }
 #hint { font-size: 0.65rem; color: var(--dim); margin-top: 0.4rem; }
 main, #panel { align-items: flex-start; }
 footer { text-align: center; color: var(--dim); font-size: 0.7rem; margin: 1rem 0; }
+
+#asm-src {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: "Courier New", monospace;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  background: #060c06;
+  color: var(--text);
+  border: 1px solid var(--edge);
+  resize: vertical;
+}

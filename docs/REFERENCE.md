@@ -103,7 +103,9 @@ payload)` segments — enough to relink a scatter-loaded ROM.
 Banked cartridges use **V1B**: same `V1` prefix, third byte `'B'`, a u16
 bank count, then per bank the same segment list as V1 (bank 0 first). The
 console and `vintage run` load every bank into the cartridge; `$5806` picks
-the visible one. `vintage asm` picks the container flavor automatically.
+the visible one. `vintage asm` picks the container flavor automatically,
+and the console's Asm panel feeds its output through the same loader —
+the wasm core carries the identical two-pass assembler.
 
 ## Save states
 

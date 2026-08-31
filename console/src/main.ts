@@ -40,6 +40,21 @@ const KEYMAP: Record<string, number> = {
   "+": 0x15, "=": 0x15, "-": 0x16, "_": 0x16,
 };
 
+// Starter for the in-browser assembler: a live one-line edit of what the
+// machine shows immediately.
+const STARTER = `; VINTAGE-1 — edit me, then press assemble & run
+        .org $E000
+start:  lda #0
+        sta $5804        ; phosphor: green
+loop:   lda $5802        ; frame counter, low byte
+        eor #$FF
+        sta $4000        ; top scanline blinks with every frame
+        jmp loop
+
+        .org $FFFC
+        .word start
+`;
+
 interface VintageApi {
   memory: WebAssembly.Memory;
   vin_reset(): void;
@@ -58,6 +73,10 @@ interface VintageApi {
   vin_save_state(): number;
   vin_save_ptr(): number;
   vin_load_state(p: number, len: number): number;
+  vin_asm(p: number, len: number): number;
+  vin_asm_ptr(): number;
+  vin_asm_err_ptr(): number;
+  vin_asm_err_len(): number;
 }
 
 
@@ -259,6 +278,8 @@ function cpuPanel() {
 function bindUi(ctx: CanvasRenderingContext2D) {
   ctxRef = ctx;
   window.addEventListener("keydown", (e) => {
+    // Typing in the assembler textarea must not drive the machine.
+    if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
     ensureAudio();
     const code = KEYMAP[e.key];
     if (code !== undefined) {
@@ -292,6 +313,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     e.textContent = budgetPct === 100 ? "100% = full speed"
       : `${budgetPct}% ≈ ${budgetPct * 333} cycles/frame`;
   });
+  (document.getElementById("asm-src") as HTMLTextAreaElement).value = STARTER;
   const demoNames = ["hello", "snake", "cube", "tune", "breakout"];
   const romList = document.getElementById("roms")!;
   for (const n of demoNames) {
@@ -341,6 +363,28 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     const ok = api.vin_load_state(base, vst.length);
     (document.getElementById("vst-msg") as HTMLElement).textContent =
       ok ? `state loaded (${vst.length.toLocaleString()} bytes)` : "not a .vst file";
+  });
+
+  // In-browser assembler: same two-pass assembler as the CLI, compiled into
+  // the wasm core. Output flows straight through the regular V1/V1B loader.
+  document.getElementById("asm-run")!.addEventListener("click", () => {
+    const src = new TextEncoder().encode(
+      (document.getElementById("asm-src") as HTMLTextAreaElement).value,
+    );
+    const base = ensureHeap(src.length);
+    heap.set(src, base);
+    const n = api.vin_asm(base, src.length);
+    heap = new Uint8Array(api.memory.buffer); // fresh view: assembly allocates
+    const msg = document.getElementById("asm-msg") as HTMLElement;
+    if (n === 0) {
+      msg.textContent = new TextDecoder().decode(
+        new Uint8Array(heap.buffer as ArrayBuffer, api.vin_asm_err_ptr(), api.vin_asm_err_len()),
+      );
+      return;
+    }
+    const p = api.vin_asm_ptr();
+    loadRom(parseVin(heap.slice(p, p + n).buffer));
+    msg.textContent = `ok: ${n.toLocaleString()} bytes`;
   });
 }
 
