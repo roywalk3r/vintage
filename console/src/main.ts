@@ -35,9 +35,21 @@ function parseVin(buf: ArrayBuffer): Vin {
 }
 
 const KEYMAP: Record<string, number> = {
-  ArrowUp: 0x11, ArrowDown: 0x12, ArrowLeft: 0x13, ArrowRight: 0x14,
-  w: 0x11, s: 0x12, a: 0x13, d: 0x14,
-  "+": 0x15, "=": 0x15, "-": 0x16, "_": 0x16,
+  // snake drives on $11-$16; calc reads ASCII digits, ops, $3D, $43, $0D, $08
+  // and accepts $15/$16 as +/-, so those two keys serve both apps
+  ArrowUp: 0x11,
+  ArrowDown: 0x12,
+  ArrowLeft: 0x13,
+  ArrowRight: 0x14,
+  w: 0x11,
+  s: 0x12,
+  a: 0x13,
+  d: 0x14,
+  "+": 0x15, "-": 0x16, "_": 0x16,   // snake speed; calc accepts $15/$16 as +/-
+  "=": 0x3D, "*": 0x2A, "/": 0x2F,
+  "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34,
+  "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+  c: 0x43, C: 0x43, Enter: 0x0D, Backspace: 0x08,
 };
 
 // Starter for the in-browser assembler: a live one-line edit of what the
@@ -314,7 +326,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
       : `${budgetPct}% ≈ ${budgetPct * 333} cycles/frame`;
   });
   (document.getElementById("asm-src") as HTMLTextAreaElement).value = STARTER;
-  const demoNames = ["hello", "snake", "cube", "tune", "breakout", "banks"];
+  const demoNames = ["hello", "snake", "cube", "tune", "breakout", "banks", "calc"];
   const romList = document.getElementById("roms")!;
   for (const n of demoNames) {
     const b = document.createElement("button");

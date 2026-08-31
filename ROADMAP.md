@@ -28,3 +28,4 @@
 - ☑ Save states (`.vst` files, console load/save)
 - ☑ In-browser assembler: paste source, run — no toolchain install
 - ☑ Demo: banks - two-bank cartridge auto-toggling through $5806, dispatcher resident in RAM
+- ☑ Demo/app: calc — a 16-bit integer calculator, the first VINTAGE-1 application (headless-tested through its $2010 ASCII display mirror)

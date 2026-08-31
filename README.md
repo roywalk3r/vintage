@@ -103,19 +103,10 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
 - `software/banks.s` — two-bank cartridge showcase: bank 0 draws vertical
   bars, bank 1 horizontal bars, and a RAM dispatcher flips the bank through
   $5806 every 128 frames
-
-## Software
-
-- `software/hello.s` — banner text via an 8×8 font table
-- `software/snake.s` — playable snake on the 256×192 playfield (arrows/wasd)
-- `software/cube.s` — a rotating 3D wireframe cube: rotation-matrix table,
-  12 Bresenham edges, double-buffer clean-frame erase
-- `software/cube_table.py` — generates the 32-phase rotation table
-- `software/tune.s` — a 32-note beeper melody: a period table indexed per
-  note, frame-paced through $5807 (the console plays actual audio)
-- `software/breakout.s` — playable breakout: 32 bricks as bitmask bytes, a
-  sliding 32-px paddle, a 2×2 ball with wall/paddle/brick bounces, and a
-  per-event beeper blip decaying through $5807
+- `software/calc.s` — a 16-bit integer calculator: digit entry with overflow
+  clamp, left-to-right + - * / chaining, =/Enter to compute, C clears,
+  Backspace rubs out a digit, ERR on division by zero. The display field is
+  mirrored as ASCII at $2010 for tooling and headless tests.
 
 ## Build & Run
 
@@ -123,7 +114,7 @@ Prereqs: Rust (stable + wasm32-unknown-unknown), node ≥ 18.
 
 ```bash
 # CLI + emulator toolchain
-cargo test                       # 79 tests (unit + integration), Klaus gate included
+cargo test                       # 86 tests (unit + integration), Klaus gate included
 cargo run -- cube.s --frames 120 # run a demo for 2 seconds, PPM to stdout
 cargo run -- asm software/cube.s -o cube.vin
 cargo run -- disasm cube.vin
