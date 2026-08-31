@@ -11,7 +11,7 @@ the assembler dialect, program shapes, and the toolchain.
 | `$4000–$57FF`  | framebuffer (6K)              |
 | `$5800–$5FFF`  | I/O bank                      |
 | `$6000–$DFFF`  | RAM (32K)                     |
-| `$E000–$FFFF`  | ROM (8K, vectors at the top)  |
+| `$E000–$FFFF`  | ROM window (8K; a banked cartridge maps one of N 8K banks here, vectors at the top)  |
 
 Frame timing: **2 MHz → 33,333 cycles/frame @ 60 Hz**. The host runs
 `run_frame` once per video frame; a game loop must either rely on the frame
@@ -29,6 +29,7 @@ and drops writes.
 | `$5803` | FRAME+1 | R   | frame counter, high byte |
 | `$5804` | PALETTE | R/W | phosphor color: 0 = green, 1 = amber, 2 = white |
 | `$5805` | RANDOM  | R   | 16-bit Galois LFSR (taps 0x002D); **every read steps it** |
+| `$5806` | BANK    | R/W | current cartridge bank (0–255). Writing a value **and the next fetch already comes from the new bank**; continuation code must exist in the target bank at the same PC, or execution must jump before switching. Read returns the current bank. The window stays write-protected. |
 | `$5807` | BEEPER  | R/W | square-wave half-period in CPU cycles; **0 = silence**. Frequency = 120,000 / (2 × period) Hz. |
 
 ## Assembler dialect
@@ -79,3 +80,8 @@ cargo run -- disasm out.vin --base $E000                         # disassemble
 
 A `.vin` file is `V1` magic, a segment count, then `(addr:u16, len:u16,
 payload)` segments — enough to relink a scatter-loaded ROM.
+
+Banked cartridges use **V1B**: same `V1` prefix, third byte `'B'`, a u16
+bank count, then per bank the same segment list as V1 (bank 0 first). The
+console and `vintage run` load every bank into the cartridge; `$5806` picks
+the visible one. `vintage asm` picks the container flavor automatically.

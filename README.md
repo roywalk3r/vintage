@@ -43,7 +43,7 @@ every demo is pixel-checked against an independent reference rasterizer.
 - ☑ Programmer's reference (`docs/REFERENCE.md`)
 - ☑ Public GitHub repo with MIT license and author headers
 - ☑ Per-demo cycle accounting in the console
-- ☐ Banked ROM / multi-load cartridge format
+- ☑ Banked ROM / multi-bank cartridge format (V1B container, $5806 bank register)
 - ☐ Hardware interrupts: NMI/IRQ vectors wired to vsync
 - ☐ Sprite unit (2 hardware sprites with x/y latches)
 - ☐ 2bpp color mode (selected via `$5804` high bit)
@@ -84,7 +84,8 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
 | $5804    | palette select  | palette select   |
 | $5805    | LFSR random (read steps it) | —   |
 | $5807    | beeper period (0 = silence) | beeper period |
-| $5806+   | —               | reserved         |
+| $5806    | current bank    | select bank for $E000–$FFFF |
+| $5807    | beeper period (0 = silence) | beeper period |
 
 ## Software
 

@@ -21,7 +21,7 @@
 - ☑ Public GitHub repo with MIT license and author headers
 - ☑ Demo: breakout — the first demo combining input + video + sound
 - ☑ Per-demo cycle accounting in the console
-- ☐ Banked ROM / multi-load cartridge format
+- ☑ Banked ROM / multi-bank cartridge format (V1B container, $5806 bank register)
 - ☐ Hardware interrupts: NMI/IRQ vectors wired to vsync
 - ☐ Sprite unit (2 hardware sprites with x/y latches)
 - ☐ 2bpp color mode (selected via `$5804` high bit)
