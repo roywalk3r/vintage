@@ -27,3 +27,4 @@
 - ☑ 2bpp color mode (`$5804` bit 7: 128×192 fat pixels, 4-color schemes)
 - ☑ Save states (`.vst` files, console load/save)
 - ☑ In-browser assembler: paste source, run — no toolchain install
+- ☑ Demo: banks - two-bank cartridge auto-toggling through $5806, dispatcher resident in RAM
