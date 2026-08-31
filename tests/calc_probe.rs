@@ -63,6 +63,10 @@ fn show(n: u16) -> String {
 fn calc_boot_draws_zero() {
     let (m, _cpu) = boot();
     assert_eq!(field(&m), format!(" {}", show(0)));
+    // regression: draw_msg's font pointer must not share a zero-page cell
+    // with the screen pointer, or nothing reaches the framebuffer
+    let fb = m.fb();
+    assert!(fb[0x209] != 0, "calc title should paint the framebuffer");
 }
 
 #[test]
