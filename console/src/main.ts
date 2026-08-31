@@ -336,7 +336,7 @@ function bindUi(ctx: CanvasRenderingContext2D) {
       : `${budgetPct}% ≈ ${budgetPct * 333} cycles/frame`;
   });
   (document.getElementById("asm-src") as HTMLTextAreaElement).value = STARTER;
-  const demoNames = ["hello", "snake", "cube", "tune", "breakout", "banks", "calc", "editor"];
+  const demoNames = ["hello", "snake", "cube", "tune", "breakout", "banks", "calc", "editor", "basic"];
   const romList = document.getElementById("roms")!;
   for (const n of demoNames) {
     const b = document.createElement("button");

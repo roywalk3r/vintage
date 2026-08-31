@@ -112,6 +112,11 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
   deletes, Enter drops a line. Insert space-pads the gap to a kept column
   so lines stay one NUL-terminated string; text lives at $1000 as 8×29
   bytes for headless tests.
+- `software/basic.s` — a tiny BASIC: line-numbered store/list/run with
+  GOTO, LET/PRINT with a full expression parser (precedence, vars, unary
+  minus), IF…GOTO with 16-bit < = > compares, and a 8×33 scrolling
+  terminal. Terminal mirror at $2500 and input buffer at $2600 are
+  ASCII for headless tests.
 
 ## Build & Run
 
@@ -119,7 +124,7 @@ Prereqs: Rust (stable + wasm32-unknown-unknown), node ≥ 18.
 
 ```bash
 # CLI + emulator toolchain
-cargo test                       # 120 tests (unit + integration), Klaus gate included
+cargo test                       # 109 tests (unit + integration), Klaus gate included
 cargo run -- cube.s --frames 120 # run a demo for 2 seconds, PPM to stdout
 cargo run -- asm software/cube.s -o cube.vin
 cargo run -- disasm cube.vin
