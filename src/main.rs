@@ -129,25 +129,25 @@ fn write_container(path: &Path, bin: &Binary) -> std::io::Result<usize> {
     if banks.len() == 1 {
         out.extend_from_slice(b"V1");
         out.extend_from_slice(&(bin.segments.len() as u16).to_le_bytes());
-        for (addr, bytes) in &bin.segments {
-            out.extend_from_slice(&addr.to_le_bytes());
-            out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-            out.extend_from_slice(bytes);
-        }
+        push_segments(&mut out, &bin.segments);
     } else {
         out.extend_from_slice(b"V1B");
         out.extend_from_slice(&(banks.len() as u16).to_le_bytes());
         for bank in banks.iter() {
             out.extend_from_slice(&(bank.len() as u16).to_le_bytes());
-            for (addr, bytes) in bank.iter() {
-                out.extend_from_slice(&addr.to_le_bytes());
-                out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-                out.extend_from_slice(bytes);
-            }
+            push_segments(&mut out, bank);
         }
     }
     fs::write(path, out)?;
     Ok(banks.len())
+}
+
+fn push_segments(out: &mut Vec<u8>, bank: &[(u16, Vec<u8>)]) {
+    for (addr, bytes) in bank {
+        out.extend_from_slice(&addr.to_le_bytes());
+        out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
 }
 
 fn cmd_run(args: &[String]) -> Result<(), String> {
