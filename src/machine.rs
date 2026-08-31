@@ -15,7 +15,7 @@
 
 use std::cell::Cell;
 
-use crate::cpu::{Bus, Cpu};
+use crate::cpu::{Bus, Cpu, FLAG_I};
 
 pub const CYCLES_PER_FRAME: u32 = 33_333;
 pub const FB_BASE: u16 = 0x4000;
@@ -43,6 +43,8 @@ pub struct Machine {
     palette: u8,
     lfsr: Cell<u16>,
     beeper_period: u8,
+    /// Vsync IRQ latch: raised at frame start, taken (or masked out) once.
+    vsync_pending: bool,
 }
 
 impl Machine {
@@ -64,6 +66,7 @@ impl Machine {
             palette: 0,
             lfsr: Cell::new(0xACE1),
             beeper_period: 0,
+            vsync_pending: false,
         }
     }
 
@@ -78,12 +81,23 @@ impl Machine {
     }
 
     /// Drive the CPU for one video frame's worth of cycles, then tick.
+    ///
+    /// Vsync pulses the IRQ line once per frame: latched at frame start,
+    /// taken at the first instruction boundary with I clear, and dropped
+    /// for the rest of the frame once serviced. A program holding `sei`
+    /// loses the pulse — that is the documented contract.
     pub fn run_frame(&mut self, cpu: &mut Cpu) {
+        self.vsync_pending = true;
         let mut budget = CYCLES_PER_FRAME as u64;
         while budget > 0 {
+            cpu.irq_line = self.vsync_pending && cpu.p & FLAG_I == 0;
             let spent = u64::from(cpu.step(self));
+            if cpu.irq_line {
+                self.vsync_pending = false;
+            }
             budget = budget.saturating_sub(spent);
         }
+        cpu.irq_line = false;
         self.tick_frame();
     }
 
