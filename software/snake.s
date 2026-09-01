@@ -99,7 +99,7 @@ rk4:
  sta NEWDIR
  rts
 rk5:
- cmp #$15
+ cmp #$2B        ; '+' = faster (ASCII, so basic/calc share the keymap)
  bne rk6
  dec SPEED
  bne rk4b
@@ -107,7 +107,7 @@ rk5:
 rk4b:
  rts
 rk6:
- cmp #$16
+ cmp #$2D        ; '-' = slower
  bne rkdone
  inc SPEED
  cmp #8

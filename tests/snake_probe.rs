@@ -52,7 +52,7 @@ fn snake_head_never_enters_wall_cell() {
     assert!(!ever_31, "head pixel landed on the wall cell x=31");
 }
 
-/// '+' (0x15) tightens the move divider, '-' (0x16) loosens it. Observable
+/// '+' (0x2B) tightens the move divider, '-' (0x2D) loosens it. Observable
 /// effect: at max speed the snake covers ground ~8x faster than at min
 /// speed — assert head x advanced more within the same frame budget.
 #[test]
@@ -74,7 +74,7 @@ fn snake_speed_keys_change_step_rate() {
         }
         m.read(0x6100)
     };
-    let fast = run(0x15); // '+' pressed once: divider 4 -> 3
-    let slow = run(0x16); // '-' pressed once: divider 4 -> 5
+    let fast = run(0x2B); // '+' pressed once: divider 4 -> 3
+    let slow = run(0x2D); // '-' pressed once: divider 4 -> 5
     assert!(fast > slow, "speed keys had no effect: fast {} slow {}", fast, slow);
 }
