@@ -90,7 +90,8 @@ fn basic_boot_shows_banner_ready() {
 fn basic_print_expression_precedence() {
     let (mut m, mut cpu) = boot();
     type_keys(&mut m, &mut cpu, b"PRINT 2+3*4\r");
-    assert_eq!(term_row(&m, 2), "20");
+    // */ must bind tighter than +-: 2+(3*4) = 14, not (2+3)*4 = 20
+    assert_eq!(term_row(&m, 2), "14");
 }
 
 #[test]

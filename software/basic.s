@@ -4,8 +4,8 @@
 ; License: MIT
 ; basic.s - line-numbered tiny BASIC: LET/PRINT/GOTO/IF...GOTO/END as
 ; one-statement lines in a 32-slot program store, plus direct RUN, LIST,
-; NEW, and immediate LET/PRINT/GOTO. Expressions evaluate 16-bit
-; left-to-right (no precedence) over variables A-Z. The screen is an
+; NEW, and immediate LET/PRINT/GOTO. Expressions evaluate 16-bit with
+; * / binding tighter than + - over variables A-Z. The screen is an
 ; 8-row scrolling terminal (rows 0-7) with the input line on row 8, and
 ; every printed row is mirrored as ASCII at $2500 for headless tests.
 ;
@@ -468,10 +468,10 @@ fac1:   cmp #$41
         rts
 fac2:   rts               ; neither: ACC = 0, unconsumed
 
-; expr: left-to-right +-*/ over 16-bit terms. Returns with y at the first
-; non-operand char (a comparison op, NUL, ...) and ACC = value.
-expr:   jsr skipsp
-        jsr factor
+; expr: +- level over 16-bit terms; term handles the tighter */ level, so
+; 2+3*4 folds as 2+(3*4). Returns with y at the first non-operand char
+; (a comparison op, NUL, ...) and ACC = value.
+expr:   jsr term
 e1:     jsr skipsp
         lda (CPTR),y
         cmp #'+'
@@ -480,28 +480,50 @@ e1:     jsr skipsp
         sta PEND
         jmp e1x
 e1a:    cmp #'-'
-        bne e1b
+        bne e1r          ; not an +- op: return, char unconsumed
         lda #2
         sta PEND
-        jmp e1x
-e1b:    cmp #'*'
-        bne e1b2
-        lda #3
-        sta PEND
-        jmp e1x
-e1b2:   cmp #'/'
-        bne e1r          ; not an arithmetic op: return, char unconsumed
-        lda #4
-        sta PEND
 e1x:    iny
+        lda PEND
+        pha              ; term clobbers PEND: save the +- op
         lda ACC
-        sta RHS
+        pha
         lda ACCH
-        sta RHSH        ; running value parked for apply
-        jsr factor
+        pha              ; park the running sum on the stack: term clobbers RHS
+        jsr term
+        pla
+        sta RHSH
+        pla
+        sta RHS
+        pla
+        sta PEND
         jsr apply
         jmp e1
 e1r:    rts
+
+; term: */ level. Same apply machinery as expr but only * and /, so the
+; factor result folds into the running product before expr sees it.
+term:   jsr factor
+t1:     jsr skipsp
+        lda (CPTR),y
+        cmp #'*'
+        bne t1a
+        lda #3
+        sta PEND
+        jmp t1x
+t1a:    cmp #'/'
+        bne t1r          ; not a */ op: hand control back to expr
+        lda #4
+        sta PEND
+t1x:    iny
+        lda ACC
+        sta RHS
+        lda ACCH
+        sta RHSH        ; running product parked for apply
+        jsr factor
+        jsr apply
+        jmp t1
+t1r:    rts
 
 ; apply: fold factor result (ACC) into the accumulator via PEND;
 ; M1 = previous ACC, M2 = new factor.
