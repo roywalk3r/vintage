@@ -4,7 +4,9 @@
 ; License: MIT
 ; Breakout — 4 rows x 8 columns of 32x8 px bricks tracked as four bitmask
 ; bytes in zero page (bit 7 = leftmost column), a 32-px paddle and a 2x2
-; ball that steps 1 px every 2nd frame. Rendering is incremental: bricks
+; ball that steps every 2nd frame: 1 px vertically and HRATE px horizontally
+; per step — quarter-paddle hits flatten the slope to 2, middle hits keep 45°.
+; Rendering is incremental: bricks
 ; stamp at init and erase on break only, the paddle redraws only when it
 ; slides, the ball is eor-erased then eor-drawn through a (x & 7) mask.
 ; Every blip on $5807 decays via a zero-page counter after 8 frames.
@@ -33,6 +35,7 @@ DHI = $F0
 T1  = $F1    ; scratch
 T2  = $F2
 TV  = $F3    ; fill value for the rect helpers
+HRATE = $F4  ; horizontal px per ball step (1 = 45°, 2 = shallow fast)
 
  .org $E000
 
@@ -111,20 +114,29 @@ step_ball:
  jsr ball_sp     ; eor-erase the ball where it was
  lda DXF
  beq sbL
- inc BX          ; slide right
+ clc
  lda BX
+ adc HRATE       ; slide right by the slope rate
+ bcs sbRw        ; wrapped past $FF: reflect
  cmp #255
- bcc sbV         ; still on screen
- dec BX          ; right wall: undo and reverse
+ bcc sbRok       ; ≤ 254: still on screen
+sbRw: eor #$FF   ; r=255→254, r=256→253: reflect about the wall plane
+ sec
+ sbc #2
+ sta BX
  jmp sbW
-sbL: lda BX
- bne sbL2
- lda #1
- sta DXF         ; left wall: reverse without stepping
- lda #91
- jsr sfx
+sbRok: sta BX
  jmp sbV
-sbL2: dec BX
+sbL: sec
+ lda BX
+ sbc HRATE
+ bcs sbLok       ; ≥ 0: ball stays on screen
+ eor #$FF        ; < 0: reflect
+ clc
+ adc #1          ; r=-1→1, r=-2→2
+ sta BX
+ jmp sbW
+sbLok: sta BX
  jmp sbV
 sbW: lda DXF
  eor #1
@@ -132,7 +144,16 @@ sbW: lda DXF
  lda #91
  jsr sfx
 sbV: lda DYF
- beq sbU
+ bne sbFall      ; rise first, fall below: keeps every branch within range
+ dec BY          ; rise
+ lda BY
+ bne sbUp        ; not at the ceiling: on to the bricks
+ lda #1          ; ceiling: reverse without stepping
+ sta DYF
+ lda #91
+ jsr sfx
+sbUp: jmp sbBr
+sbFall:
  inc BY          ; fall
  lda BY
  cmp #191
@@ -162,25 +183,30 @@ sbV: lda DYF
  sta DYF
  lda #176
  sta BY          ; park the ball on top of the paddle
+ lda #1
+ sta HRATE       ; default 45°, quarter hits flatten to 2
  lda BX
  sec
- sbc T1
- bpl sbPR        ; aim by paddle half
- lda #0
- sta DXF
+ sbc T1          ; o = ball left edge - paddle face (0..32)
+ bpl sbP1
+ lda #0          ; a 1px graze lands in the far-left tier
+sbP1: ldx #1        ; aim right by default (right half of the face)
+ ldy #1
+ cmp #16
+ bcs sbP3        ; o ≥ 16: right half
+ ldx #0          ; left half → aim left
+ cmp #8
+ bcs sbP4        ; 8..15: 45° left
+ ldy #2          ; 0..7: shallow left
+sbP4: stx DXF
+ sty HRATE
  jmp sbPS
-sbPR: lda #1
- sta DXF
+sbP3: cmp #24
+ bcc sbP4        ; 16..23: 45° right
+ ldy #2          ; 24..32: shallow right
+ jmp sbP4
 sbPS: lda #136
  jsr sfx
- jmp sbBr
-sbU: lda BY
- bne sbU2
- lda #1
- sta DYF         ; ceiling: reverse without stepping
- lda #91
- jsr sfx
-sbU2: dec BY
  jmp sbBr
 sbLost:
  lda #255
@@ -239,6 +265,8 @@ reset_ball:
  lda RND
  and #1
  sta DXF
+ lda #1
+ sta HRATE       ; respawn at 45°
  rts
 
 ; --- raise a blip: half-period in A, 8-frame decay handled in main ---
