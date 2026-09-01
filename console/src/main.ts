@@ -409,6 +409,10 @@ function bindUi(ctx: CanvasRenderingContext2D) {
     loadRom(parseVin(heap.slice(p, p + n).buffer));
     msg.textContent = `ok: ${n.toLocaleString()} bytes`;
   });
+  document.getElementById("asm-clear")!.addEventListener("click", () => {
+    (document.getElementById("asm-src") as HTMLTextAreaElement).value = "";
+    (document.getElementById("asm-msg") as HTMLElement).textContent = "";
+  });
 }
 
 function markActive(btn: HTMLButtonElement) {

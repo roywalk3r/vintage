@@ -21,19 +21,19 @@ body {
   align-items: center;
   justify-content: center;
 }
-#shell { width: min(1024px, 96vw); }
+#shell { width: min(1100px, 96vw); }
 header { text-align: center; margin: 1rem 0; }
 h1 { letter-spacing: 0.5em; font-weight: 700; color: var(--hot); text-shadow: 0 0 18px rgba(83,255,126,0.5); }
 .tag { color: var(--dim); font-size: 0.8rem; margin-top: 0.5rem; }
-main { display: flex; gap: 1.5rem; }
-#tv {
-  position: relative;
-  flex: 1;
-  align-items: stretch;
+main {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 1.25rem;
+  align-items: start;
 }
+#left { min-width: 0; }
 #tv {
   position: relative;
-  flex: 1;
   aspect-ratio: 4 / 3;
   background: #000;
   border-radius: 18px;
@@ -58,39 +58,45 @@ main { display: flex; gap: 1.5rem; }
   );
   mix-blend-mode: multiply;
 }
-#panel { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 1rem; }
-#panel section {
+#panel { display: flex; flex-direction: column; gap: 1rem; }
+section.card {
   background: var(--panel);
   border: 1px solid var(--edge);
   border-radius: 10px;
   padding: 0.8rem;
 }
-#panel h2 {
+section.card h2 {
   font-size: 0.7rem;
   letter-spacing: 0.3em;
   color: var(--dim);
   text-transform: uppercase;
   margin-bottom: 0.6rem;
 }
+#roms {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
 .romBtn, .btns button {
   display: block;
   width: 100%;
-  padding: 0.5rem;
+  padding: 0.45rem 0.6rem;
   background: #0c130d;
   border: 1px solid var(--edge);
   border-radius: 6px;
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  white-space: nowrap;
 }
 .romBtn.active {
   border-color: var(--hot);
   color: var(--hot);
   box-shadow: 0 0 12px rgba(83, 255, 126, 0.25);
 }
-.romBtn { margin-bottom: 0.4rem; text-align: left; }
+.romBtn { text-align: left; }
 #file-well {
-  margin-top: 0.4rem;
+  margin-top: 0.5rem;
   padding: 0.5rem;
   border: 1px dashed var(--edge);
   border-radius: 6px;
@@ -104,20 +110,23 @@ main { display: flex; gap: 1.5rem; }
 #cpu { font-size: 0.72rem; line-height: 1.5; min-height: 7em; color: var(--hot); }
 #cyc { font-size: 0.65rem; line-height: 1.5; color: var(--dim); margin-top: 0.4rem; }
 .btns { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
-.btns button:hover { border-color: var(--hot); color: var(--hot); }
+.btns button:hover, .romBtn:hover { border-color: var(--hot); color: var(--hot); }
 #budget { width: 100%; }
 #hint { font-size: 0.65rem; color: var(--dim); margin-top: 0.4rem; }
-main, #panel { align-items: flex-start; }
 footer { text-align: center; color: var(--dim); font-size: 0.7rem; margin: 1rem 0; }
 
 #asm-src {
   width: 100%;
   box-sizing: border-box;
   font-family: "Courier New", monospace;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.35;
   background: #060c06;
   color: var(--text);
   border: 1px solid var(--edge);
   resize: vertical;
+}
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; }
+  #panel { width: 100%; }
 }
