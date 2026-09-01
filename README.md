@@ -49,6 +49,9 @@ every demo is pixel-checked against an independent reference rasterizer.
 - ☑ 2bpp color mode (selected via `$5804` high bit)
 - ☑ Save states (`.vst` files, the console save/load buttons)
 - ☑ Demo: banks — two-bank cartridge auto-toggling through $5806, dispatcher in RAM
+- ☑ Demo: calc — 16-bit integer calculator through the $2010 display mirror
+- ☑ Demo: editor — 8×28 text editor with a blinking cursor
+- ☑ Demo: basic — LET/PRINT/GOTO/IF, expressions with real operator precedence
 - ☑ In-browser assembler: paste source, run — no toolchain install
 
 *This list is the living roadmap — [ROADMAP.md](ROADMAP.md) is the canonical copy.*
