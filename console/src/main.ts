@@ -35,8 +35,9 @@ function parseVin(buf: ArrayBuffer): Vin {
 }
 
 const KEYMAP: Record<string, number> = {
-  // snake drives on $11-$16; calc reads ASCII digits, ops, $3D, $43, $0D, $08
-  // and accepts $15/$16 as +/-, so those two keys serve both apps
+  // snake drives on $11-$14 (arrows/wasd) with ASCII '+'/$2B and '-'/$2D for
+  // speed; calc, editor and basic read plain printable ASCII, so every
+  // punctuation key delivers its real glyph
   ArrowUp: 0x11,
   ArrowDown: 0x12,
   ArrowLeft: 0x13,
@@ -45,7 +46,7 @@ const KEYMAP: Record<string, number> = {
   s: 0x12,
   a: 0x13,
   d: 0x14,
-  "+": 0x15, "-": 0x16, "_": 0x16,   // snake speed; calc accepts $15/$16 as +/-
+  "+": 0x2B, "-": 0x2D, "_": 0x2D,
   "=": 0x3D, "*": 0x2A, "/": 0x2F,
   "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34,
   "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
