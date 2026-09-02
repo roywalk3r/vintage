@@ -2,12 +2,14 @@
 ; Author: roywalk3r
 ; Repo: https://github.com/roywalk3r/vintage
 ; License: MIT
-; basic.s - line-numbered tiny BASIC: LET/PRINT/GOTO/IF...GOTO/END as
-; one-statement lines in a 32-slot program store, plus direct RUN, LIST,
-; NEW, and immediate LET/PRINT/GOTO. Expressions evaluate 16-bit with
-; * / binding tighter than + - over variables A-Z. The screen is an
-; 8-row scrolling terminal (rows 0-7) with the input line on row 8, and
-; every printed row is mirrored as ASCII at $2500 for headless tests.
+; basic.s - line-numbered tiny BASIC: FOR/NEXT (with signed STEP), INPUT,
+; LET/PRINT/GOTO/IF...GOTO/POKE as one-statement lines in a 32-slot
+; program store, plus direct RUN, LIST, NEW, and immediate versions of
+; most statements. Expressions evaluate 16-bit over variables A-Z with
+; * / binding tighter than + -, parentheses, unary minus, and RND /
+; PEEK(addr) as primaries. The screen is an 8-row scrolling terminal
+; (rows 0-7) with the input line on row 8, and every printed row is
+; mirrored as ASCII at $2500 for headless tests.
 ;
 ; Program store: 32 slots of 32 bytes at $2000, [LNLO, LNHI, LEN,
 ; TEXT...], bump-allocated by shifting the sorted tail. Direct commands
@@ -65,6 +67,9 @@ LN     = $34
 LNH    = $35
 LEN    = $36          ; xstore: parked insert index during the shift
 STXV   = $3E          ; xstore: IBUF index of the line text
+FSP    = $3F          ; FOR/NEXT: loop levels in use (0..4)
+FORST  = $40          ; 4 levels x 7 bytes: [var, limit lo/hi, step lo/hi,
+                      ; ret lo/hi]; ret = CPTR+32 at FOR time
 DISPL  = $37          ; to_dec scratch (calc port, re-pointed)
 DISPH  = $38
 DLEN   = $39
@@ -166,7 +171,7 @@ dexec:  lda IBUF
         cmp #'R'
         beq drr_j
         cmp #'N'
-        beq dnw_j
+        beq dnew
         cmp #'E'         ; END direct: no-op
         beq hdone
         cmp #'L'
@@ -179,12 +184,45 @@ dexec:  lda IBUF
         jsr xlet
         jmp hcln
 d2:     cmp #'P'
-        beq dprint
+        beq dpk
         cmp #'G'
         beq dgoto_j
         cmp #'I'
-        beq dif_d
+        beq difi
         jmp xerr         ; unknown direct command
+dnew:   lda IBUF+2
+        cmp #'X'
+        beq dnx_j        ; NEXT
+        jmp dnw_j        ; NEW
+dnx_j:  lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xnext
+        jmp hcln
+dpk:    lda IBUF+1
+        cmp #'O'
+        beq dpk_j        ; POKE
+        jmp dprint       ; PRINT
+dpk_j:  lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xpoke
+        jmp hcln
+difi:   lda IBUF+1
+        cmp #'N'
+        beq din_j        ; INPUT
+        jmp dif_d        ; IF
+din_j:  lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xinput
+        jmp hcln
 dprint:
         lda #<IBUF
         sta CPTR
@@ -203,6 +241,8 @@ dgoto_j:
         jsr xgoto
         lda ERRF
         bne dgc_j
+        lda #0
+        sta FSP          ; fresh FOR stack for the direct-GOTO run
         jsr xloop
         jmp hcln         ; found: run from the target line, then clear
 dif_d:
@@ -214,7 +254,9 @@ dif_d:
         jsr xif
         bcs dif1         ; taken: CPTR is on the target slot
         jmp hcln         ; false: stay in direct mode
-dif1:   jmp xloop
+dif1:   lda #0
+        sta FSP          ; fresh FOR stack for the direct-IF run
+        jmp xloop
 ; --- terminal helper: row pointers --------------------------------------
 ; A = row 0..7 -> SRC/SRCH = TERM + 33*row (offset <= 231, no carry)
 rowptr: stx T0H        ; tclear/tscroll count rows in X: preserve it
@@ -378,7 +420,8 @@ rp3:    sta IBUFM+2,x
 hcln:   lda #0
         sta IBLEN
         sta IBUF
-        rts
+        sta ERRF        ; a finished direct command/run retires the abort
+        rts             ; flag, so a past error can't no-op later runs
 ; --- pnum: decimal digit run at (CPTR),y -> ACC --------------------------
 ; Sets DGTF when at least one digit was consumed; leaves the first
 ; non-digit unconsumed. Values wrap modulo 65536 like every other op.
@@ -439,8 +482,9 @@ skipsp: lda (CPTR),y
         jmp skipsp
 sk1:    rts
 
-; factor: skipsp, then a number (digit run via pnum) or variable A-Z;
-; anything else yields 0. ACC holds the 16-bit result.
+; factor: skipsp, then a number (digit run via pnum), a variable A-Z, RND,
+; PEEK(expr), a parenthesized expression, or a unary minus. Anything else
+; yields 0. ACC holds the 16-bit result; y advances past what was consumed.
 factor: jsr skipsp
         lda #0
         sta ACC
@@ -452,9 +496,23 @@ factor: jsr skipsp
         bcs fac1
         jmp pnum         ; digit run: pnum leaves ACC and y set
 fac1:   cmp #$41
-        bcc fac2
+        bcc fac5         ; below 'A': parens, minus, or nothing
         cmp #$5B
-        bcs fac2
+        bcs fac5
+        sta T1           ; park the letter: T1 is factor-local scratch
+        iny
+        lda (CPTR),y
+        cmp #'E'
+        bne fac3
+        lda T1
+        cmp #'P'
+        beq fpeek        ; "PE..." -> PEEK
+fac3:   cmp #'N'
+        bne fac4
+        lda T1
+        cmp #'R'
+        beq frnd         ; "RN..." -> RND
+fac4:   lda T1           ; plain variable: y is already past the letter
         sec
         sbc #$41
         asl a
@@ -464,9 +522,68 @@ fac1:   cmp #$41
         sta ACC
         lda VARS+1,x
         sta ACCH
+        rts
+fac5:   cmp #'('
+        bne fac6
+        iny
+        jsr expr         ; nested parse: expr/term park on the hw stack
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fpar_e
         iny
         rts
-fac2:   rts               ; neither: ACC = 0, unconsumed
+fac6:   cmp #'-'
+        bne fac7
+        iny
+        jsr factor
+        sec              ; negate: ACC = 0 - ACC (two's complement)
+        lda #0
+        sbc ACC
+        sta T0
+        lda #0
+        sbc ACCH
+        sta ACCH
+        lda T0
+        sta ACC
+        rts
+fac7:   rts               ; neither: ACC = 0, unconsumed
+fpar_e: jmp xerr          ; malformed PEEK/paren: ERR, abort via ERRF
+
+frnd:   lda #2
+        jsr ady          ; past RND
+        lda $5805        ; LFSR read steps it: a fresh byte every call
+        sta ACC
+        lda #0
+        sta ACCH
+        rts
+
+fpeek:  lda #3
+        jsr ady          ; PEEK is 4 letters and y sits on the 2nd char:
+                         ; skip E, E, K to land past the keyword (RND is 3)
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'('
+        bne fpar_e
+        iny
+        jsr expr         ; address expression
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fpar_e
+        iny
+        lda ACC
+        sta T0
+        lda ACCH
+        sta T0H          ; T0/T0H adjacent: (zp),y pointer
+        sty T1
+        ldy #0
+        lda (T0),y       ; full-bus read: RAM, I/O, ROM all answer
+        ldy T1
+        sta ACC
+        lda #0
+        sta ACCH
+        rts
 
 ; expr: +- level over 16-bit terms; term handles the tighter */ level, so
 ; 2+3*4 folds as 2+(3*4). Returns with y at the first non-operand char
@@ -598,9 +715,12 @@ xstmt:  ldy #3
         lda (CPTR),y
         cmp #'P'
         bne xs1
-        jsr xprint
-        clc
-        rts
+        iny
+        lda (CPTR),y
+        dey              ; peek 2nd char without consuming: handlers
+        cmp #'O'         ; expect y at the keyword's first letter
+        beq xpk_j
+        jmp xprint
 xs1:    cmp #'L'
         bne xs2
         jsr xlet
@@ -613,12 +733,31 @@ xs2:    cmp #'G'
         rts
 xs3:    cmp #'I'
         bne xs4
+        iny
+        lda (CPTR),y
+        dey              ; peek 2nd char: IF vs INPUT
+        cmp #'N'
+        beq xin_j
         jsr xif
         rts            ; xif returns C = condition taken
 xs4:    cmp #'E'
         bne xs5
         jmp xend       ; C: see xend
-xs5:    jmp xerr       ; unknown keyword: ERR, abort
+xs5:    cmp #'F'
+        bne xs6
+        jsr xfor
+        rts            ; xfor returns C=0 (fall into the body)
+xs6:    cmp #'N'
+        bne xs7
+        jsr xnext
+        rts            ; xnext returns C: 1 resume at the FOR's successor
+xs7:    jmp xerr       ; unknown keyword: ERR, abort
+xpk_j:  jsr xpoke
+        clc
+        rts
+xin_j:  jsr xinput
+        clc
+        rts
 ; --- xprint: PRINT expr | PRINT. y at the P of the keyword --------------
 ; A bare PRINT prints an empty row. The value goes through to_dec into
 ; DBUF (LSB-first), is reversed MSB-first into TB, and tprint-ed.
@@ -689,8 +828,11 @@ xlet:   lda #3
         cmp #'='
         bne xl_e
         iny
-        jsr expr
-        ldx VIDX
+        lda VIDX
+        pha              ; park the target index: expr's variable terms
+        jsr expr         ; overwrite VIDX, so the store can't trust it
+        pla
+        tax
         lda ACC
         sta VARS,x
         lda ACCH
@@ -792,6 +934,304 @@ xi_t:   jsr skipsp
         rts
 xi_ok:  sec
         rts
+xf_ej:  jmp xf_e         ; branch trampoline: xfor's checks sit past the
+                         ; 6502's -128..+127 relative range from xf_e
+; --- xfor: FOR var = start TO limit [STEP step]. y at the F -------------
+; Pushes (var, limit, step, ret=CPTR+32) onto the 4-level loop stack; the
+; start value lands in the variable and the body is the slots after this
+; one. NEXT resumes at ret, so the FOR never re-runs.
+xfor:   lda #3
+        jsr ady          ; past FOR
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$41
+        bcc xf_ej
+        cmp #$5B
+        bcs xf_ej
+        sec
+        sbc #$41
+        asl a
+        sta VIDX
+        iny
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'='
+        bne xf_ej
+        iny              ; past '='
+        lda VIDX
+        pha              ; park the target index: expr's variable terms
+        jsr expr         ; clobber VIDX, so the store can't trust it
+        pla
+        tax
+        stx VIDX         ; restore the cell for the record's +0 var store
+        lda ACC
+        sta VARS,x
+        lda ACCH
+        sta VARS+1,x     ; var = start
+        tya
+        pha              ; park y: the record store reuses it as its index
+        jsr xf_base      ; SRC = this level's record at FORST + 7*FSP
+        ldy #0
+        lda VIDX
+        sta (SRC),y      ; +0 var
+        pla
+        tay
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'T'
+        bne xf_ej
+        lda #2
+        jsr ady          ; past TO
+        jsr skipsp
+        jsr expr         ; limit in ACC
+        tya
+        pha              ; park y: the record store reuses it as its index
+        jsr xf_base      ; re-derive SRC: pnum/expr clobbered it
+        ldy #1
+        lda ACC
+        sta (SRC),y      ; park the limit in the record's own +1/+2: the
+        iny              ; STEP parse reuses every scratch cell, and a
+        lda ACCH         ; stack park is IRQ-unsafe — a vsync push between
+        sta (SRC),y      ; tsx and txs drops the interrupt's saved pc
+        pla
+        tay
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'S'
+        beq xf_s
+        lda #1           ; no STEP: step = 1
+        sta T0
+        lda #0
+        sta T1
+        jmp xf_rec
+xf_s:   lda #4
+        jsr ady          ; past STEP
+        jsr skipsp
+        jsr expr         ; step in ACC
+        lda ACC
+        sta T0
+        lda ACCH
+        sta T1
+xf_rec: jsr xf_base      ; re-derive SRC
+        ldy #3
+        lda T0
+        sta (SRC),y      ; +3 step lo
+        iny
+        lda T1
+        sta (SRC),y      ; +4 step hi
+        iny
+        lda CPTR
+        clc
+        adc #32
+        sta (SRC),y      ; +5 ret lo = the slot after the FOR
+        iny
+        lda CPTRH
+        adc #0
+        sta (SRC),y      ; +6 ret hi
+        inc FSP
+        clc              ; fall through into the body
+        rts
+xf_e:   jmp xerr
+
+; xf_base: SRC/SRCH = FORST + 7*FSP (the record being pushed)
+xf_base:
+        ldx FSP
+        cpx #4
+        bcs xf_e         ; loop stack full
+        lda mult7,x
+        clc
+        adc #<FORST
+        sta SRC
+        lda #FORST/$100
+        adc #0
+        sta SRCH
+        rts
+mult7:  .byte 0,7,14,21
+
+; --- xnext: NEXT [var]. Pops the top loop level, steps the variable,
+; and repositions CPTR to the FOR's successor (C=1) or falls through
+; (C=0) once the limit is passed. y at the N of NEXT ---------------------
+xnext:  lda #4
+        jsr ady          ; past NEXT
+        ldx FSP
+        bne xn_hf        ; has a FOR level: pop it
+        jmp xn_e         ; NEXT without FOR
+xn_hf:  ldx FSP
+        dex
+        lda mult7,x      ; index the top level but leave FSP: the pop
+                         ; happens on exit only, or the next NEXT of a
+                         ; continuing loop finds an empty stack
+        clc
+        adc #<FORST
+        sta SRC
+        lda #FORST/$100
+        adc #0
+        sta SRCH         ; SRC/SRCH = the popped level's record
+        ldy #0
+        lda (SRC),y
+        sta T0           ; var index
+        ldy #1
+        lda (SRC),y
+        sta M1
+        ldy #2
+        lda (SRC),y
+        sta M1H          ; M1 = limit
+        ldy #3
+        lda (SRC),y
+        sta T1
+        ldy #4
+        lda (SRC),y
+        sta T1H          ; T1 = step
+        ldy #7           ; the record loads left y=4: restore the post-keyword
+        jsr skipsp       ; cursor (ady landed here) before skipping spaces
+        lda (CPTR),y
+        cmp #$41
+        bcc xn_add
+        cmp #$5B
+        bcs xn_add
+        sec
+        sbc #$41
+        asl a
+        cmp T0
+        bne xn_e
+        iny
+xn_add: ldx T0
+        lda VARS,x
+        clc
+        adc T1
+        sta VARS,x
+        lda VARS+1,x
+        adc T1H
+        sta VARS+1,x     ; var += step
+        lda VARS,x
+        sta M2
+        lda VARS+1,x
+        sta M2H          ; M2 = var after the step
+        lda T1H
+        bmi xn_neg
+        sec              ; step >= 0: exit iff limit < var (signed)
+        lda M1
+        sbc M2
+        lda M1H
+        sbc M2H
+        bvs xn_v1
+        bmi xn_exit      ; V=0, N=1: limit < var -> exit
+        jmp xn_go        ; V=0, N=0: limit >= var -> continue
+xn_v1:  bmi xn_go        ; V=1, N=1: inverted to positive -> continue
+        jmp xn_exit      ; V=1, N=0: inverted to negative -> exit
+xn_neg: sec              ; step < 0: exit iff var < limit (signed)
+        lda M2
+        sbc M1
+        lda M2H
+        sbc M1H
+        bvs xn_v2
+        bmi xn_exit      ; V=0, N=1: var < limit -> exit
+        jmp xn_go
+xn_v2:  bmi xn_go        ; V=1, N=1: true positive -> continue
+        jmp xn_exit      ; V=1, N=0: true negative -> exit
+xn_go:  ldy #5
+        lda (SRC),y
+        sta CPTR
+        ldy #6
+        lda (SRC),y
+        sta CPTRH        ; resume at the slot after the FOR
+        sec
+        rts
+xn_exit:
+        dec FSP          ; NOW pop the level
+        clc
+        rts              ; fall past NEXT
+xn_e:   jmp xerr
+
+; --- xinput: INPUT var. Prints "? " on row 8, reads a line through the
+; one-key buffer (backspace works), parses digits into the variable -----
+xinput: lda #5
+        jsr ady          ; past INPUT
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$41
+        bcc xi_e
+        cmp #$5B
+        bcs xi_e
+        sec
+        sbc #$41
+        asl a
+        sta VIDX
+        lda #0
+        sta IBLEN
+        sta IBUF         ; fresh empty line
+        jsr rprompt      ; "? " on row 8
+xin1:   lda $5800
+        beq xin1         ; wait for a key
+        cmp #$0D
+        beq xin_d
+        cmp #$08
+        beq xin_b
+        cmp #$20
+        bcc xin1         ; ignore control codes
+        cmp #$7F
+        bcs xin1         ; ignore anything past 'Z'
+        jsr happend
+        jsr rprompt
+        jmp xin1
+xin_b:  jsr hbksp
+        jsr rprompt
+        jmp xin1
+xin_d:  lda VIDX
+        pha              ; park the target index: pnum clobbers VIDX
+        lda CPTR
+        pha
+        lda CPTRH
+        pha              ; park the program cursor: the parse repoints CPTR
+        lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr pnum
+        pla
+        sta CPTRH
+        pla
+        sta CPTR         ; restore the cursor: xloop walks slots from CPTR
+        pla
+        tax
+        lda ACC
+        sta VARS,x
+        lda ACCH
+        sta VARS+1,x
+        rts
+xi_e:   jmp xerr
+
+; --- xpoke: POKE addr, val. y at the P of POKE ---------------------------
+xpoke:  lda #4
+        jsr ady          ; past POKE
+        jsr skipsp
+        jsr expr         ; address
+        lda ACC
+        pha
+        lda ACCH
+        pha              ; park the address on the hardware stack
+        jsr skipsp
+        lda (CPTR),y
+        cmp #','
+        bne pk_e
+        iny
+        jsr skipsp
+        jsr expr         ; value
+        lda ACC
+        sta T1
+        lda ACCH
+        sta T1H
+        pla
+        sta T0H
+        pla
+        sta T0           ; pull order: ACCH parked last, so hi comes off first
+        ldy #0
+        lda T1
+        sta (T0),y       ; full-bus write: RAM, framebuffer, I/O all take it
+        rts
+pk_e:   jmp xerr
+
 ; --- findline: target line in ACC -> C=1 found, CPTR = slot base --------
 findline:
         ldx #0
@@ -1004,7 +1444,9 @@ drun:   lda NUMPROG
         sta CPTR
         lda #PROG/$100
         sta CPTRH
-        jsr xloop
+        lda #0
+        sta FSP          ; a run starts with no live loops (xloop is re-entered
+        jsr xloop        ; per statement, so this can't live at its top)
         jmp hcln
 
 xnew:   lda #0
@@ -1027,6 +1469,8 @@ xerr:   lda #<errmsg
         lda #errmsg/$100
         sta MSGHI
         jsr tprint
+        lda #0
+        sta FSP          ; a failed run leaves no live loops behind
         lda #1
         sta ERRF
         rts

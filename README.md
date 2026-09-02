@@ -116,8 +116,9 @@ console/       Vite + vanilla-TS frontend (CRT renderer, ROM picker, debugger)
   so lines stay one NUL-terminated string; text lives at $1000 as 8×29
   bytes for headless tests.
 - `software/basic.s` — a tiny BASIC: line-numbered store/list/run with
-  GOTO, LET/PRINT with a full expression parser (precedence, vars, unary
-  minus), IF…GOTO with 16-bit < = > compares, and a 8×33 scrolling
+  GOTO, LET/PRINT with a full expression parser (precedence, vars, parens,
+  unary minus), IF…GOTO with 16-bit < = > compares, FOR/NEXT with signed
+  STEP (nested, 4 levels), INPUT, RND, PEEK/POKE, and a 8×33 scrolling
   terminal. Terminal mirror at $2500 and input buffer at $2600 are
   ASCII for headless tests.
 

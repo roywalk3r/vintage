@@ -161,3 +161,98 @@ fn basic_backspace_fixes_typed_line() {
     type_keys(&mut m, &mut cpu, b"\x085\r");
     assert_eq!(term_row(&m, 2), "5");
 }
+
+#[test]
+fn basic_for_next_sum() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET S=0\r20 FOR I=1 TO 5\r30 LET S=S+I\r40 NEXT I\r50 PRINT S\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "15");
+}
+
+#[test]
+fn basic_for_next_negative_step() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=10 TO 1 STEP -3\r20 PRINT I\r30 NEXT I\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    // the loop spans several frames; let the run settle before asserting
+    for _ in 0..4 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "10");
+    assert_eq!(term_row(&m, 3), "7");
+    assert_eq!(term_row(&m, 4), "4");
+    assert_eq!(term_row(&m, 5), "1");
+}
+
+#[test]
+fn basic_for_next_nested() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET S=0\r20 FOR I=1 TO 2\r30 FOR J=1 TO 3\r40 LET S=S+1\r50 NEXT J\r60 NEXT I\r70 PRINT S\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "6");
+}
+
+#[test]
+fn basic_next_without_for_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 NEXT\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ERR");
+}
+
+#[test]
+fn basic_rnd_poke_collect() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=0 TO 19\r20 POKE 4608+I, RND\r30 NEXT I\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    let mut vals: Vec<u8> = Vec::new();
+    for i in 0..20u16 {
+        vals.push(m.read(0x1200 + i));
+    }
+    let mut uniq = vals.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert!(uniq.len() >= 4, "20 RND reads must vary, got {vals:?}");
+}
+
+#[test]
+fn basic_poke_peek_roundtrip() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 POKE 4608,42\r20 PRINT PEEK(4608)\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "42");
+}
+
+#[test]
+fn basic_poke_peek_framebuffer() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 POKE 16416,255\r20 PRINT PEEK(16416)\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "255");
+    assert_eq!(m.fb()[32], 255, "POKE $4020 must land in the framebuffer");
+}
+
+#[test]
+fn basic_input_assigns_var() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 INPUT A\r20 PRINT A\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    type_keys(&mut m, &mut cpu, b"42\r");
+    // the assignment and the PRINT settle over a few frames
+    for _ in 0..4 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "42");
+}
+
+#[test]
+fn basic_parens_and_unary_minus() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PRINT (2+3)*4\r");
+    assert_eq!(term_row(&m, 2), "20");
+    type_keys(&mut m, &mut cpu, b"PRINT -5\r");
+    assert_eq!(term_row(&m, 3), "65531");
+    type_keys(&mut m, &mut cpu, b"PRINT 2*-3\r");
+    assert_eq!(term_row(&m, 4), "65530");
+}
