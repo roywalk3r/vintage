@@ -166,14 +166,15 @@ hstor_j: jsr xstore
         jmp hcln
 drr_j:  jmp drun
 dnw_j:  jmp xnew
-xlj_j:  jmp xlist
+xlj_j:  jsr xlist
+        jmp hcln         ; xlist rts'd past hcln, leaving the line buffered
 dexec:  lda IBUF
         cmp #'R'
         beq drr_j
         cmp #'N'
         beq dnew
-        cmp #'E'         ; END direct: no-op
-        beq hdone
+        cmp #'E'         ; END direct: retire the line, not just the flag
+        beq dhcln_j
         cmp #'L'
         bne d2
         lda IBUF+1
@@ -216,6 +217,9 @@ difi:   lda IBUF+1
         cmp #'N'
         beq din_j        ; INPUT
         jmp dif_d        ; IF
+dhcln_j:
+        jsr hcln
+        rts              ; direct-mode exit that must retire the line
 din_j:  lda #<IBUF
         sta CPTR
         lda #IBUF/$100
@@ -256,7 +260,8 @@ dif_d:
         jmp hcln         ; false: stay in direct mode
 dif1:   lda #0
         sta FSP          ; fresh FOR stack for the direct-IF run
-        jmp xloop
+        jsr xloop
+        jmp hcln         ; xloop rts'd past hcln (same leak as LIST)
 ; --- terminal helper: row pointers --------------------------------------
 ; A = row 0..7 -> SRC/SRCH = TERM + 33*row (offset <= 231, no carry)
 rowptr: stx T0H        ; tclear/tscroll count rows in X: preserve it
@@ -1439,7 +1444,7 @@ xdone:  rts
 
 ; --- direct R (RUN), N (NEW) -------------------------------------------
 drun:   lda NUMPROG
-        beq dl_end       ; nothing to run: back to direct mode
+        beq drun0        ; nothing to run: clear the line, back to direct mode
         lda #0
         sta CPTR
         lda #PROG/$100
@@ -1448,6 +1453,8 @@ drun:   lda NUMPROG
         sta FSP          ; a run starts with no live loops (xloop is re-entered
         jsr xloop        ; per statement, so this can't live at its top)
         jmp hcln
+drun0:  jsr hcln
+        rts
 
 xnew:   lda #0
         sta NUMPROG

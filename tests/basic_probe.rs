@@ -256,3 +256,50 @@ fn basic_parens_and_unary_minus() {
     type_keys(&mut m, &mut cpu, b"PRINT 2*-3\r");
     assert_eq!(term_row(&m, 4), "65530");
 }
+
+// A direct command must retire the input line (hcln) even when its handler
+// returns through a bare rts (LIST/END/direct-IF/RUN-with-no-program used to
+// unwind past hcln, leaving the submitted text in IBUF so the next typed
+// line concatenated with it).
+#[test]
+fn basic_direct_list_retires_the_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT 1\r");
+    type_keys(&mut m, &mut cpu, b"LIST\r");
+    assert_eq!(m.read(0x12), 0, "IBLEN must clear after LIST");
+    assert_eq!(input_row(&m), "?");
+    type_keys(&mut m, &mut cpu, b"PRINT 2\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "2");
+    assert!(hit, "follow-up PRINT must run cleanly after LIST");
+}
+
+#[test]
+fn basic_direct_end_retires_the_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"END\r");
+    assert_eq!(m.read(0x12), 0, "IBLEN must clear after END");
+    type_keys(&mut m, &mut cpu, b"PRINT 3\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "3");
+    assert!(hit, "follow-up PRINT must run cleanly after END");
+}
+
+#[test]
+fn basic_direct_run_empty_program_retires_the_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(m.read(0x12), 0, "IBLEN must clear after RUN with no program");
+    type_keys(&mut m, &mut cpu, b"PRINT 4\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "4");
+    assert!(hit, "follow-up PRINT must run cleanly after an empty RUN");
+}
+
+#[test]
+fn basic_direct_if_taken_retires_the_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"IF 1=1 GOTO 10\r");
+    assert_eq!(m.read(0x12), 0, "IBLEN must clear after a taken direct IF");
+    type_keys(&mut m, &mut cpu, b"PRINT 5\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "5");
+    assert!(hit, "follow-up PRINT must run cleanly after a direct IF");
+}
