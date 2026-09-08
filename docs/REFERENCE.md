@@ -86,8 +86,11 @@ sta  ...
 ```
 
 Demos live in `software/*.s` — `hello.s` (text via 8×8 font table), `snake.s`
-(playable), `cube.s` (wireframe, uses `.align`), `tune.s` (beeper melody).
-Start from whichever is closest to what you want.
+(playable), `cube.s` (wireframe, uses `.align`), `tune.s` (beeper melody),
+`paint.s` (keyboard drawing on the 2bpp color framebuffer: arrows move a
+fat-pixel cursor, `z` plots, `x` erases, `c` cycles color, `n` clears,
+`s`/`l` save/load through a $6000 shadow). Start from whichever is closest
+to what you want.
 
 ## Toolchain
 
