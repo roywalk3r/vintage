@@ -105,9 +105,13 @@ ASCII mirror at `$2500` is the headless test contract).
 
 - Statements: `LET` (numeric var or `var$` = string expr), `PRINT` with a
   `;`-separated list of literals, string vars and numeric items, `IF cond
-  GOTO n` with 16-bit compares **or string compares** (`= < >` on string
-  exprs: the first differing character decides, and when one side is a
-  prefix of the other the lengths decide), `FOR var = a TO b [STEP s]` /
+  THEN <line-no | statement> | GOTO n` with 16-bit compares **or string
+  compares** (`= < >` on string exprs: the first differing character
+  decides, and when one side is a prefix of the other the lengths decide).
+  THEN accepts a line number (jump), `GOTO n`, or any statement inline —
+  `IF 1=1 THEN PRINT 7` runs it and execution continues at the next line;
+  anything after THEN that isn't a digit is parsed as that statement, so
+  unknown keywords are ERR. `FOR var = a TO b [STEP s]` /
   `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
   `POKE addr, val`, `PLOT x, y` / `UNPLOT x, y` (set/clear one pixel of the
   1bpp framebuffer at `$4000`: both coords are full expressions, x must land

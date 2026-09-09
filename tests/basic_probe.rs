@@ -154,6 +154,107 @@ fn basic_if_false_advances() {
 }
 
 #[test]
+fn basic_if_then_line_taken() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1 THEN 30\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"30 PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "7");
+    assert_ne!(term_row(&m, 3), "9");
+}
+
+#[test]
+fn basic_if_then_line_not_taken() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=2 THEN 30\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"30 PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "9");
+    assert_eq!(term_row(&m, 3), "7");
+}
+
+#[test]
+fn basic_if_then_inline_print_advances() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1 THEN PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "7");
+    assert_eq!(term_row(&m, 3), "9");
+}
+
+#[test]
+fn basic_if_then_inline_goto_repositions() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1 THEN GOTO 30\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"30 PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "7");
+}
+
+#[test]
+fn basic_if_then_inline_skipped_when_false() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=2 THEN PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "9");
+}
+
+#[test]
+fn basic_if_then_string_cond_inline() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"X\"\r");
+    type_keys(&mut m, &mut cpu, b"20 IF A$=\"X\" THEN PRINT 3\r");
+    type_keys(&mut m, &mut cpu, b"30 PRINT 4\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "3");
+    assert_eq!(term_row(&m, 3), "4");
+}
+
+#[test]
+fn basic_if_then_missing_line_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1 THEN 99\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ERR");
+}
+
+#[test]
+fn basic_if_then_unknown_statement_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1 THEN A\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ERR");
+}
+
+#[test]
+fn basic_direct_if_then_print_runs_inline() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"IF 1=1 THEN PRINT 5\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "5");
+    assert!(hit, "direct THEN PRINT must execute immediately");
+    type_keys(&mut m, &mut cpu, b"PRINT 6\r");
+    let hit6 = (0..8).any(|r| term_row(&m, r) == "6");
+    assert!(hit6, "prompt must recover after a direct THEN PRINT");
+}
+
+#[test]
+fn basic_direct_if_then_line_jumps_into_run() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT 7\r");
+    type_keys(&mut m, &mut cpu, b"IF 1=1 THEN 20\r");
+    let hit7 = (0..8).any(|r| term_row(&m, r) == "7");
+    assert!(hit7, "direct THEN <line> must start a run at that line");
+    assert!(!(0..8).any(|r| term_row(&m, r) == "9"), "line 10 must not run: jump starts at 20");
+}
+
+#[test]
 fn basic_backspace_fixes_typed_line() {
     let (mut m, mut cpu) = boot();
     type_keys(&mut m, &mut cpu, b"PRINT 6");

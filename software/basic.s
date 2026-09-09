@@ -779,7 +779,9 @@ apold:  lda RHS
 ; --- xstmt: one statement at (CPTR),y. Returns C=1 when the statement
 ; repositioned CPTR (GOTO, taken IF, END), C=0 to advance 32 bytes ------
 xstmt:  ldy #3
-        lda (CPTR),y
+; xstmy: same dispatch, but y already sits at the keyword's first letter
+; (THEN's inline-statement form reuses this from the far region)
+xstmy:  lda (CPTR),y
         cmp #'P'
         bne xs1
         iny
@@ -1111,7 +1113,7 @@ xi_bad:
 xi_t:   jsr skipsp
         lda (CPTR),y
         cmp #'G'
-        bne xi_bad
+        bne xi_tj        ; not GOTO: THEN form, parsed in the far region
         lda #4
         jsr ady
         jsr skipsp
@@ -1121,6 +1123,7 @@ xi_t:   jsr skipsp
         jsr xerr
         sec
         rts
+xi_tj:  jmp xthenf       ; far: THEN <line-no or statement>
 xi_ok:  sec
         rts
 
@@ -2701,3 +2704,31 @@ dupf:   lda #<IBUF
         ldy #0
         jsr xunplf       ; far UNPLOT entry: clear it again
         jmp hcln
+
+; --- THEN: line number or inline statement ------------------------------
+; Reached by jmp from xif with y at THEN's T and the stacked return of
+; xstmt's jsr xif: the rts at the end carries C to the statement dispatch.
+; A digit after THEN is a line number (pnum/findline, same shape as GOTO);
+; anything else is an inline statement, dispatched at y through xstmy —
+; its C semantics (1 = repositioned) propagate unchanged.
+xthenf: lda #4
+        jsr ady          ; past THEN
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$30
+        bcc xth_s        ; below a digit: inline statement
+        cmp #$3A
+        bcc xth_n        ; a digit: THEN <line-no>
+        ; anything else (letters, symbols): inline statement — an unknown
+        ; keyword reaches xerr through the normal dispatch, so `THEN A`
+        ; correctly errors instead of findline'ing on a stale ACC
+xth_s:  jsr xstmy        ; C propagates: reposition or advance per handler
+        rts
+xth_n:  jsr pnum
+        jsr findline
+        bcs xth_ok
+        jsr xerr
+        sec
+        rts
+xth_ok: sec
+        rts
