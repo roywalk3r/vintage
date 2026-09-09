@@ -32,6 +32,8 @@ SPTR   = $65           ; string-var slot pointer for (zp),y access
 SPTRH  = $66
 TBLEN  = $67           ; PRINT compose cursor into TB
 SINF   = $68           ; INPUT is targeting a string variable
+RDLO   = $69           ; DATA/READ data cursor: slot base = scanning,
+RDHI   = $6A           ; otherwise mid-list inside a DATA line's items
 
 ; --- zero page ---
 IBLEN  = $12           ; input buffer length
@@ -267,6 +269,7 @@ dgoto_j:
         bne dgc_j
         lda #0
         sta FSP          ; fresh FOR stack for the direct-GOTO run
+        jsr rdinit       ; fresh data cursor for the direct-GOTO run
         jsr xloop
         jmp hcln         ; found: run from the target line, then clear
 dif_d:
@@ -280,6 +283,7 @@ dif_d:
         jmp hcln         ; false: stay in direct mode
 dif1:   lda #0
         sta FSP          ; fresh FOR stack for the direct-IF run
+        jsr rdinit       ; fresh data cursor for the direct-IF run
         jsr xloop
         jmp hcln         ; xloop rts'd past hcln (same leak as LIST)
 ; --- terminal helper: row pointers --------------------------------------
@@ -815,15 +819,16 @@ xs6:    cmp #'N'
         jsr xnext
         rts            ; xnext returns C: 1 resume at the FOR's successor
 xs7:    cmp #'R'
-        bne xs8
+        bne xs7d
         iny
-        lda (CPTR),y     ; 2nd char: E = RETURN, else unknown keyword
+        lda (CPTR),y     ; 2nd char: E = the RE... family (3rd char picks)
         dey
         cmp #'E'
         bne xs8
-        jsr xret
-        sec
-        rts
+        jmp xr3          ; far dispatch: READ / RETURN / RESTORE, C per handler
+xs7d:   cmp #'D'
+        bne xs8
+        jmp xd3          ; far: DATA is a no-op statement (data lives here)
 xs8:    jmp xerr       ; unknown keyword: ERR, abort
 xpk_j:  jsr xpoke
         clc
@@ -884,17 +889,19 @@ pitem:  jsr skipsp
         cmp #'$'
         beq pi_s
 pi_n:   jsr expr
+        sty T0          ; park the parse index: nump's tputc rewrites y
         jsr nump
+        ldy T0
         rts
 pi_s:   jsr strexpr
-        sty T0          ; park the parse index: the copy uses y
-        ldy #0
-pi1:    cpy SLEN
+        sty T0          ; park the parse index: the copy runs on x
+        ldx #0
+pi1:    cpx SLEN
         bcs pi2
-        lda SSCR,y
-        jsr tputc       ; tputc rewrites y, so reload the source index
-        iny
-        bne pi1
+        lda SSCR,x
+        jsr tputc       ; tputc owns y; x indexes the copy source
+        inx
+        jmp pi1
 pi2:    ldy T0
         rts
 
@@ -1808,7 +1815,8 @@ drun:   lda NUMPROG
         lda #0
         sta FSP          ; a run starts with no live loops and no return
         sta GSP          ; frames (xloop is re-entered per statement, so this
-        jsr xloop        ; can't live at its top)
+        jsr rdinit       ; frames; data cursor rewinds per run, and per run-start
+        jsr xloop        ; in the direct GOTO/IF run paths too
         jmp hcln
 drun0:  jsr hcln
         rts
@@ -2236,3 +2244,336 @@ xret:   ldx GSP
 gs_e:   jsr xerr
         sec
         rts
+
+; --- DATA/READ/RESTORE ----------------------------------------------------
+; The data cursor RDLO/RDHI walks the program store slot by slot: a slot
+; base address means "scanning for the next DATA line", anything else
+; means "mid-list inside one". Every run start (drun, direct GOTO/IF) and
+; RESTORE rewind it to PROG. READ takes literals only — no expressions —
+; and type-mismatched items ERR just like malformed ones.
+;
+; drun / direct-run paths: rdinit rewinds the cursor.
+
+rdinit: lda #0
+        sta RDLO
+        lda #PROG/$100
+        sta RDHI
+        rts
+
+; xd3: DATA reached in execution order — the data itself is inert; skip it.
+; Reached by jmp from xstmt with y at the keyword's first letter.
+xd3:    iny
+        lda (CPTR),y     ; 2nd char of DATA
+        dey
+        cmp #'A'
+        bne xd3e
+        clc
+        rts
+xd3e:   jmp xerr
+
+; xr3: the R-family 3rd-char dispatch, reached by jmp from xstmt with y at
+; the keyword. Handlers run and return to xloop via the stacked return.
+xr3:    iny
+        iny
+        lda (CPTR),y     ; 3rd char: A = READ, S = RESTORE, T = RETURN
+        dey
+        dey
+        cmp #'T'
+        bne xr3a
+        jsr xret
+        sec
+        rts
+xr3a:   cmp #'A'
+        bne xr3b
+        jsr xread
+        clc
+        rts
+xr3b:   cmp #'S'
+        bne xr3e
+        jsr xrestore
+        clc
+        rts
+xr3e:   jmp xerr
+
+; xrestore: rewind the data cursor to the first slot.
+xrestore:
+        lda #0
+        sta RDLO
+        lda #PROG/$100
+        sta RDHI
+        rts
+
+xr1e:   jmp xerr        ; branch trampoline (dead cell: only branch targets land here)
+
+; xread: READ var[,var...]. Per item: parse the variable (VIDX = its slot),
+; park CPTR/y on the CPU stack — rdnext/rdnexts repoint CPTR at the DATA
+; text — pull the next literal, restore, and store into the variable's
+; slot. Numeric items go through pnum (optional '-'); string items copy
+; into the 8-byte STRV slot via SPTR exactly like LET's string store.
+xread:  lda #4
+        jsr ady          ; past READ
+        jsr skipsp
+xr1:    lda (CPTR),y
+        cmp #$41
+        bcc xr1e
+        cmp #$5B
+        bcs xr1e
+        sec
+        sbc #$41
+        asl a
+        sta VIDX         ; rdnext never touches VIDX, so it survives the call
+        iny
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'$'
+        beq xr_str
+        ; numeric: park CPTR/y, fetch the literal, restore, store
+        lda CPTR
+        pha
+        lda CPTRH
+        pha
+        tya
+        pha
+        jsr rdnext
+        pla
+        tay
+        pla
+        sta CPTRH
+        pla
+        sta CPTR
+        lda VIDX
+        tax
+        lda ACC
+        sta VARS,x
+        lda ACCH
+        sta VARS+1,x
+        jmp xr_next
+xr_str: iny              ; past $
+        lda CPTR
+        pha
+        lda CPTRH
+        pha
+        tya
+        pha              ; y parked: the STRV store uses y freely
+        jsr rdnexts      ; -> SSCR/SLEN
+        ; store into the STRV slot: zero it first, then SLEN bytes
+        lda VIDX
+        asl a
+        asl a            ; VIDX is already *2: *4 = 8-byte slots
+        clc
+        adc #<STRV
+        sta SPTR
+        lda #STRV/$100
+        adc #0
+        sta SPTRH
+        ldy #7           ; zero the slot first: shorter values end in NULs
+xr0:    lda #0
+        sta (SPTR),y
+        dey
+        bpl xr0
+        ldy #0
+xr1s:   cpy SLEN
+        bcs xr2s
+        lda SSCR,y
+        sta (SPTR),y
+        iny
+        bne xr1s
+xr2s:   pla
+        tay
+        pla
+        sta CPTRH
+        pla
+        sta CPTR
+        jmp xr_next
+xr_e:   jmp xerr
+
+; xr_next: per-variable advance: ',' loops to the next variable, NUL ends.
+xr_next:
+        jsr skipsp
+        lda (CPTR),y
+        cmp #','
+        bne xr_next1
+        iny
+        jsr skipsp
+        jmp xr1
+xr_next1:
+        cmp #0
+        bne xr_ne1
+        rts
+xr_ne1: jmp xerr
+
+; rdnext: pull the next DATA item as a number into ACC (optional '-'),
+; then advance the data cursor via rdadv. A quoted or bare-word item —
+; anything that isn't a digit run — ERRs: type mismatches ERR, they
+; don't coerce.
+rdnext: jsr rditem
+        lda (CPTR),y
+        cmp #'"'
+        beq rdn_bad
+        cmp #'-'
+        bne rdn_num
+        iny
+        jsr pnum
+        sec              ; negate: ACC = 0 - ACC
+        lda #0
+        sbc ACC
+        sta T0
+        lda #0
+        sbc ACCH
+        sta ACCH
+        lda T0
+        sta ACC
+        jmp rdadv
+rdn_num:
+        jsr pnum
+        jmp rdadv
+rdn_bad:
+        jmp xerr
+
+; rdnexts: pull the next DATA item as a string into SSCR/SLEN. A leading
+; quote reads to the closing quote (chars past 7 are skipped but the item
+; still must be terminated); an unquoted item reads raw to ',' or NUL with
+; trailing spaces trimmed. Then advance the data cursor via rdadv.
+rdnexts:
+        jsr rditem
+        lda (CPTR),y
+        cmp #'"'
+        beq rds_q
+        ; unquoted: raw chars to ',' or NUL, capped at 7 stored
+        ldx #0
+rds1:   lda (CPTR),y
+        cmp #','
+        beq rds_t
+        cmp #0
+        beq rds_t
+        cpx #7
+        bcc rds1s
+        iny              ; over cap: skip the char, keep scanning for the end
+        jmp rds1
+rds1s:  sta SSCR,x
+        inx
+        iny
+        jmp rds1
+rds_t:  ; trailing-space trim: walk x back while the last char is a space
+        cpx #0
+        beq rds_z
+        lda SSCR-1,x     ; SSCR-1+x = SSCR[x-1]: the last stored char
+        cmp #' '
+        bne rds_z
+        dex
+        jmp rds_t
+rds_z:  stx SLEN
+        jmp rdadv
+rds_q:  iny              ; past the opening quote
+        ldx #0
+rds2:   lda (CPTR),y
+        cmp #'"'
+        beq rds2e
+        cmp #0
+        beq rds_e2       ; unterminated: ERR
+        cpx #7
+        bcc rds2s
+        iny              ; over cap: skip but keep looking for the quote
+        jmp rds2
+rds2s:  sta SSCR,x
+        inx
+        iny
+        jmp rds2
+rds2e:  stx SLEN
+        iny              ; past the closing quote
+        jmp rdadv
+rds_e2: jmp xerr
+
+; rditem: position the cursor at the next DATA item: CPTR/CPTRH = the
+; position, y = 0. Scan mode (RDLO & $1F == 0) checks the end of the
+; program first (PROGTOP/PROGEH), then per slot looks for text starting
+; with "DATA" (text at +3), steps RDPTR by 32 and loops. Found: RDLO += 7
+; (past "DATA") and parse from there. Mid-list entry: CPTR = RDPTR, skipsp.
+rditem: lda RDLO
+        and #$1F
+        bne rdi_mid
+        ; scan mode: end check against the one-past-last-line pointer
+        lda PROGEH
+        cmp RDHI
+        bcc rdi_out
+        bne rdi_go
+        lda PROGTOP
+        cmp RDLO
+        bcc rdi_out
+        beq rdi_out
+        ; slot keyword check: SRC = RDPTR, bytes +3..+6 must be D,A,T,A
+rdi_go: lda RDLO
+        sta SRC
+        lda RDHI
+        sta SRCH
+        ldy #3
+        ldx #0
+rdi_s1: lda (SRC),y
+        cmp DTXT,x
+        bne rdi_n
+        inx
+        iny
+        cpx #4
+        bcc rdi_s1
+        ; matched "DATA": cursor = slot+7 (32-aligned base + 7 can't carry)
+        lda #7
+        clc
+        adc RDLO
+        sta RDLO
+        jmp rdi_mid
+rdi_n:  ; not DATA: next slot. RDLO+32 may carry into RDHI.
+        lda RDLO
+        clc
+        adc #32
+        sta RDLO
+        bcc rdi_scan
+        inc RDHI
+rdi_scan:
+        jmp rditem
+rdi_out:
+        jmp xerr
+rdi_mid:
+        lda RDLO
+        sta CPTR
+        lda RDHI
+        sta CPTRH
+        ldy #0
+        jmp skipsp
+
+; rdadv: after an item, the data cursor must end on a slot base (list
+; finished) or just past a ','. skipsp first, then: ',' -> RDPTR = CPTR+y;
+; NUL -> slot base + 32. Anything else is malformed data: ERR.
+rdadv:  jsr skipsp
+        lda (CPTR),y
+        cmp #','
+        bne rdadv1
+        iny
+        ; RDPTR = CPTR + y (16-bit)
+        lda CPTR
+        sta RDLO
+        lda CPTRH
+        sta RDHI
+        tya
+        clc
+        adc RDLO
+        sta RDLO
+        lda #0
+        adc RDHI
+        sta RDHI
+        rts
+rdadv1: cmp #0
+        bne rdadv_e
+        ; NUL: next slot base = (CPTR & $E0) + 32, carry into the hi byte
+        lda CPTR
+        and #$E0
+        clc
+        adc #32
+        sta RDLO
+        lda #0
+        adc CPTRH
+        sta RDHI
+        rts
+rdadv_e:
+        jmp xerr
+
+DTXT:   .text "DATA"

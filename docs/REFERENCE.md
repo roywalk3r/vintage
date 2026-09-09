@@ -110,6 +110,15 @@ at `$2500` is the headless test contract).
   prefix of the other the lengths decide), `FOR var = a TO b [STEP s]` /
   `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
   `POKE addr, val`, `END`.
+- Data pool: `DATA item[,item...]` lines are inert when executed; `READ`
+  vars pulls the next literal(s) — numerics through the shared digit-run
+  parser (an optional leading `-` negates, values wrap mod 65536), strings
+  as quoted literals or bare words ending at `,`/end-of-line with trailing
+  spaces trimmed (7-char cap like every string). Types must match: a bare
+  word is never a number, a quoted item is never read into a numeric var —
+  both are ERR, as is reading past the last item. `RESTORE` rewinds the
+  data cursor; it also rewinds fresh on every RUN and on direct GOTO/IF
+  runs.
 - Subroutines: `GOSUB n` jumps to line `n` remembering the slot after the
   GOSUB; `RETURN` resumes there. Up to 4 nested GOSUBs; the FOR/NEXT depth
   is snapshotted at call time, so loops opened inside a subroutine are

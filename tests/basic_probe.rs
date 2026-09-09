@@ -492,3 +492,96 @@ fn basic_direct_gosub_errors() {
     type_keys(&mut m, &mut cpu, b"GOSUB 100\r");
     assert_eq!(term_row(&m, 2), "ERR", "direct GOSUB has no return stack");
 }
+
+#[test]
+fn basic_data_read_fills_variables() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA 42,7\r20 READ A,B\r30 PRINT A;B\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "427", "A=42 then B=7 on one shared row");
+}
+
+#[test]
+fn basic_read_spans_multiple_data_lines() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA 1\r20 DATA 2\r30 READ A,B\r40 PRINT A;B\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "12", "READ walks the data cursor across DATA lines");
+}
+
+#[test]
+fn basic_read_strings_quoted_and_bare() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA HI,\"8 BIT\"\r20 READ A$,B$\r30 PRINT A$;B$\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "HI8 BIT", "bare word and quoted literal both read");
+}
+
+#[test]
+fn basic_read_negative_number() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA -3\r20 READ A\r30 PRINT A\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "65533", "-3 mod 65536, like every other op");
+}
+
+#[test]
+fn basic_restore_rewinds_data() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA 1,2\r20 READ A\r30 RESTORE\r40 READ B\r50 PRINT A;B\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "11", "RESTORE rewinds: B re-reads the first item");
+}
+
+#[test]
+fn basic_run_resets_data_cursor() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA 9\r20 READ A\r30 PRINT A\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "9");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 3), "9", "second RUN re-reads from the top, not ERR");
+}
+
+#[test]
+fn basic_data_lines_never_execute() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA 1,2\r20 READ A\r30 PRINT A\rRUN\r");
+    // one submission: typing RUN as part of the same frame batch would be
+    // fine either way, but keep the run on its own frame
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "1", "DATA as a statement is an inert no-op");
+}
+
+#[test]
+fn basic_read_past_data_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 READ A\rRUN\r");
+    assert_eq!(term_row(&m, 2), "ERR", "no DATA anywhere: out of data");
+}
+
+// PRINT's item list: tputc owns y, so pitem's string copy must index SSCR
+// with x — indexing with y compared the source position against TBLEN and
+// dropped chars from every second-and-later string item.
+#[test]
+fn basic_print_second_string_item_keeps_spaces() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PRINT \"AB\";\"CD\"\r");
+    assert_eq!(term_row(&m, 2), "ABCD");
+    type_keys(&mut m, &mut cpu, b"PRINT \"8 BIT\";\"OK\"\r");
+    assert_eq!(term_row(&m, 3), "8 BITOK");
+}
+
+#[test]
+fn basic_print_numeric_then_numeric() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PRINT 42;7\r");
+    assert_eq!(term_row(&m, 2), "427", "nump parks the parse index before appending digits");
+}
+
+#[test]
+fn basic_read_type_mismatch_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 DATA HI\r20 READ A\rRUN\r");
+    assert_eq!(term_row(&m, 2), "ERR", "a bare word is not a numeric literal");
+}
