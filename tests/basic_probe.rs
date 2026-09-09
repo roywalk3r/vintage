@@ -390,3 +390,49 @@ fn basic_unclosed_quote_errors() {
     type_keys(&mut m, &mut cpu, b"RUN\r");
     assert_eq!(term_row(&m, 2), "ERR");
 }
+
+// IF accepts string conditions: both sides are full string exprs compared
+// with = < >, first differing char decides, lengths decide at prefix-equal.
+#[test]
+fn basic_if_string_equal_taken() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"HI\"\r20 IF A$=\"HI\" GOTO 40\r30 PRINT 0\r40 PRINT 1\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "1");
+}
+
+#[test]
+fn basic_if_string_not_equal_advances() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"HI\"\r20 IF A$=\"HO\" GOTO 40\r30 PRINT 8\r40 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "8");
+    assert_eq!(term_row(&m, 3), "9");
+}
+
+#[test]
+fn basic_if_string_prefix_decides() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF \"A\"<\"AB\" GOTO 40\r20 PRINT 0\r30 PRINT 1\r40 PRINT 2\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "2", "\"A\" < \"AB\": taken, so only line 40 prints");
+}
+
+#[test]
+fn basic_if_string_empty_equals_empty() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF B$=\"\" GOTO 30\r20 PRINT 8\r30 PRINT 1\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "1", "two empty strings compare equal");
+}
+
+#[test]
+fn basic_if_string_direct_taken_retires() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"IF B$=\"\" GOTO 10\r");
+    assert_eq!(m.read(0x12), 0, "IBLEN must clear after a taken direct string IF");
+    type_keys(&mut m, &mut cpu, b"PRINT 5\r");
+    let hit = (0..8).any(|r| term_row(&m, r) == "5");
+    assert!(hit, "follow-up PRINT must run cleanly after a direct string IF");
+}

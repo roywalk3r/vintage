@@ -105,13 +105,17 @@ at `$2500` is the headless test contract).
 
 - Statements: `LET` (numeric var or `var$` = string expr), `PRINT` with a
   `;`-separated list of literals, string vars and numeric items, `IF cond
-  GOTO n` with 16-bit compares, `FOR var = a TO b [STEP s]` / `NEXT` (signed
-  steps, nesting), `GOTO`, `INPUT` (numeric or string), `POKE addr, val`, `END`.
+  GOTO n` with 16-bit compares **or string compares** (`= < >` on string
+  exprs: the first differing character decides, and when one side is a
+  prefix of the other the lengths decide), `FOR var = a TO b [STEP s]` /
+  `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
+  `POKE addr, val`, `END`.
 - Numeric expressions: 16-bit integer `+ - * /` with precedence and parens,
   unary minus, variables A–Z, `PEEK(addr)`, `RND`, comparison ops.
 - Strings: 26 slots A$–Z$ at `$1200`, 7 chars max — longer literals and
   concats truncate silently; quoted literals, `+` concatenation, mixed `;`
-  PRINT lists, `LEN(str-expr)` → 0..7. An unterminated literal is ERR.
+  PRINT lists, `LEN(str-expr)` → 0..7, and IF conditions may compare any
+  two string exprs with `= < >`. An unterminated literal is ERR.
 - A parse or runtime fault prints ERR and aborts the run; NEW clears the
   program, variables and string slots.
 

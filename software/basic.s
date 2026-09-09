@@ -976,7 +976,22 @@ xg1:    lda SRC
 xif:    lda #2
         jsr ady         ; past IF
         jsr skipsp
-        jsr expr        ; stops on the comparison char
+        lda (CPTR),y
+        cmp #'"'
+        bne xi_q        ; not a quote: maybe X$
+        jmp xi_s        ; a quote: string condition (xi_s is past a
+                        ; short branch's reach, so jmp instead)
+xi_q:   cmp #$41
+        bcc xi_n        ; below A-Z: numeric
+        cmp #$5B
+        bcs xi_n        ; past A-Z: numeric
+        iny
+        lda (CPTR),y
+        dey
+        cmp #'$'
+        bne xi_n        ; plain variable: numeric
+        jmp xi_s        ; X$: string condition
+xi_n:   jsr expr        ; stops on the comparison char
         lda ACC
         pha             ; LHS parked on the hardware stack: pnum/expr clobber
         lda ACCH        ; every scratch cell, so T0/T0H are not safe
@@ -1015,7 +1030,8 @@ xi_gz:
         sta T1
 xi_d:   pla
         pla             ; drop the parked LHS before any exit path
-        lda COMP
+xi_sj:  lda COMP        ; the string path joins here: it never parked a
+                        ; LHS, so the drop above must not run for it
         cmp #$3D        ; '=' : taken iff verdict == equal
         beq xi_b1
         cmp #$3C        ; '<' : taken iff verdict == less
@@ -1052,6 +1068,71 @@ xi_t:   jsr skipsp
         rts
 xi_ok:  sec
         rts
+
+; --- string IF: IF str-expr (=|<|>) str-expr GOTO n ----------------------
+; Both sides are full string exprs. The left lands in SSCR and is parked
+; in TB (TBLEN), so the right can rebuild SSCR; the compare then walks
+; both buffers from 0 — the first differing char decides, and when a
+; common prefix runs out the lengths decide. The op dispatch joins the
+; numeric path at xi_sj, so the taken/not-taken tail and the direct-IF
+; retire are shared.
+xi_s:   jsr strexpr      ; LHS -> SSCR/SLEN
+        sty T0          ; park the parse index: the copy uses y
+        lda #0
+        sta TBLEN
+        ldy #0
+xi_s1:  cpy SLEN
+        bcs xi_s2
+        lda SSCR,y
+        jsr tputc       ; y comes back as TBLEN, in lockstep with the
+        iny             ; source index: iny keeps the two in step
+        bne xi_s1
+xi_s2:  ldy T0
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$3D
+        beq xi_s3
+        cmp #$3C
+        beq xi_s3
+        cmp #$3E
+        beq xi_s3
+        jmp xerr
+xi_s3:  sta COMP
+        iny
+        jsr skipsp
+        jsr strexpr      ; RHS -> SSCR/SLEN, y past it (xi_t skips to G)
+        ldx #0           ; the compare runs with x so y survives for xi_t:
+                         ; xi_t expects y at the char after the condition
+                         ; (the 'G' of GOTO), and ldy #0 here used to wipe
+                         ; that position — every taken string IF then read
+                         ; IBUF[1] or slot text at 0 and hit xi_bad
+xi_s4:  cpx TBLEN
+        bcs xi_s6        ; LHS exhausted: lengths decide
+        cpx SLEN
+        bcs xi_s5        ; RHS exhausted: LHS longer -> greater
+        lda TB,x
+        cmp SSCR,x
+        beq xi_s7
+        bcc xi_lt        ; LHS char smaller: less
+        lda #3
+        sta T1
+        jmp xi_sj
+xi_lt:  lda #1
+        sta T1
+        jmp xi_sj
+xi_s5:  lda #3
+        sta T1
+        jmp xi_sj
+xi_s6:  cpx SLEN
+        beq xi_s8        ; both exhausted: equal
+        lda #1          ; LHS exhausted, RHS has more: less
+        sta T1
+        jmp xi_sj
+xi_s7:  inx
+        jmp xi_s4
+xi_s8:  lda #2
+        sta T1
+        jmp xi_sj
 xf_ej:  jmp xf_e         ; branch trampoline: xfor's checks sit past the
                          ; 6502's -128..+127 relative range from xf_e
 ; --- xfor: FOR var = start TO limit [STEP step]. y at the F -------------
