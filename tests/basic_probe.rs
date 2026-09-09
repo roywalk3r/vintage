@@ -303,3 +303,90 @@ fn basic_direct_if_taken_retires_the_line() {
     let hit = (0..8).any(|r| term_row(&m, r) == "5");
     assert!(hit, "follow-up PRINT must run cleanly after a direct IF");
 }
+
+// Strings live at STRV = $1200: 26 slots of 8 bytes (7 chars + NUL), slot
+// for A$ first, so slot(c) reads the C-string at $1200 + 8*(c-'A').
+fn slot(m: &Machine, c: u8) -> String {
+    let base = 0x1200 + 8 * (c - b'A') as u16;
+    (0..8)
+        .map(|i| m.read((base + i) as u16))
+        .take_while(|&b| b != 0)
+        .map(|b| b as char)
+        .collect()
+}
+
+#[test]
+fn basic_let_string_assigns_slot() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"HI\"\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(slot(&m, b'A'), "HI");
+    assert_eq!(slot(&m, b'B'), "", "unassigned slots must stay empty");
+}
+
+#[test]
+fn basic_direct_print_string() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PRINT \"HI\"\r");
+    assert_eq!(term_row(&m, 2), "HI");
+}
+
+#[test]
+fn basic_print_mixed_semicolon_list() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A=7\r20 LET B$=\"X\"\r30 PRINT \"P\";B$;A\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "PX7");
+}
+
+#[test]
+fn basic_concat_appends() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"AB\"\r20 LET A$=A$+\"CD\"\r30 PRINT A$\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ABCD");
+}
+
+#[test]
+fn basic_len_counts_chars() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"AB\"\r20 PRINT LEN(A$)\r30 PRINT LEN(B$)\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "2");
+    assert_eq!(term_row(&m, 3), "0", "LEN of an empty string must be 0");
+}
+
+#[test]
+fn basic_input_string_assigns_slot() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 INPUT A$\r20 PRINT A$\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    type_keys(&mut m, &mut cpu, b"HELLO\r");
+    // the assignment and the PRINT settle over a few frames
+    for _ in 0..4 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "HELLO");
+    assert_eq!(slot(&m, b'A'), "HELLO");
+}
+
+#[test]
+fn basic_string_truncates_at_seven() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 LET A$=\"12345678\"\r20 LET A$=A$+\"9\"\r30 PRINT A$\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(
+        term_row(&m, 2),
+        "1234567",
+        "literals and concats cap at 7 chars"
+    );
+    assert_eq!(slot(&m, b'A'), "1234567");
+}
+
+#[test]
+fn basic_unclosed_quote_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT \"AB\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ERR");
+}

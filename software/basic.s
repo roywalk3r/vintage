@@ -24,7 +24,14 @@ PROG   = $2000         ; 32 slots x 32 bytes: [LNLO, LNHI, LEN, text...]
 TERM   = $2500         ; terminal mirror, 8 rows x (32 chars + NUL)
 IBUFM  = $2600         ; input-line mirror (33 bytes: prompt + text + pad)
 DBUF   = $2700         ; decimal digit scratch, LSB-first
-TB     = $2740         ; 33-byte compose buffer for LIST lines
+TB     = $2740         ; 33-byte compose buffer for PRINT/LIST lines
+STRV   = $1200         ; A$-Z$, 8 bytes each: 7 chars + NUL, NUL-padded
+SSCR   = $5C           ; string build buffer, 8 bytes in zero page
+SLEN   = $64           ; composed string length (0..7)
+SPTR   = $65           ; string-var slot pointer for (zp),y access
+SPTRH  = $66
+TBLEN  = $67           ; PRINT compose cursor into TB
+SINF   = $68           ; INPUT is targeting a string variable
 
 ; --- zero page ---
 IBLEN  = $12           ; input buffer length
@@ -91,6 +98,7 @@ PBUF   = $2780        ; input-row compose buffer (33 bytes)
 ; --- boot: clear everything, print READY, then the poll loop ------------
 start:  jsr clear_scr
         jsr tclear
+        jsr szero
         lda #0
         sta OUTROW
         sta IBLEN
@@ -512,6 +520,8 @@ fac1:   cmp #$41
         lda T1
         cmp #'P'
         beq fpeek        ; "PE..." -> PEEK
+        cmp #'L'
+        beq fle_j        ; "LE..." -> LEN (trampoline: flen is far)
 fac3:   cmp #'N'
         bne fac4
         lda T1
@@ -555,6 +565,8 @@ fac6:   cmp #'-'
 fac7:   rts               ; neither: ACC = 0, unconsumed
 fpar_e: jmp xerr          ; malformed PEEK/paren: ERR, abort via ERRF
 
+fle_j:  jmp flen         ; branch-range trampoline (flen lives far away)
+
 frnd:   lda #2
         jsr ady          ; past RND
         lda $5805        ; LFSR read steps it: a fresh byte every call
@@ -585,6 +597,30 @@ fpeek:  lda #3
         ldy #0
         lda (T0),y       ; full-bus read: RAM, I/O, ROM all answer
         ldy T1
+        sta ACC
+        lda #0
+        sta ACCH
+        rts
+
+; LEN("string expr"): compose the argument through strexpr, then hand
+; the composed length back as a 16-bit number so it folds like any
+; other factor.
+flen:   lda #2
+        jsr ady          ; LEN is 3 letters, y sits on the 2nd char:
+                         ; skip E, N to land on the '(' (PEEK is 4: +3)
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'('
+        bne fpar_e
+        iny
+        jsr strexpr      ; -> SSCR/SLEN; the numeric running sum is
+                         ; parked on the hw stack, y parks in T0
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fpar_e
+        iny
+        lda SLEN
         sta ACC
         lda #0
         sta ACCH
@@ -763,17 +799,32 @@ xpk_j:  jsr xpoke
 xin_j:  jsr xinput
         clc
         rts
-; --- xprint: PRINT expr | PRINT. y at the P of the keyword --------------
-; A bare PRINT prints an empty row. The value goes through to_dec into
-; DBUF (LSB-first), is reversed MSB-first into TB, and tprint-ed.
+; --- xprint: PRINT item ; item ... y at the P of the keyword ------------
+; Items compose into TB through a TBLEN cursor (tputc), one tprint at
+; the end. A ';' advances the cursor; a bare PRINT is an empty row.
 xprint:
         lda #5
         jsr ady
         jsr skipsp
         lda (CPTR),y
         beq xp0
-        jsr expr
-        jsr nump
+        lda #0
+        sta TBLEN
+xp1:    jsr pitem
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$3B         ; ';' is the comment char: no char literal for it
+        bne xp2
+        iny
+        jmp xp1
+xp2:    lda #0          ; end of list: NUL-terminate and print the row
+        ldy TBLEN
+        sta TB,y
+        lda #<TB
+        sta MSGLO
+        lda #TB/$100
+        sta MSGHI
+        jsr tprint
         rts
 xp0:    lda #0
         sta TB          ; bare PRINT: empty row
@@ -784,27 +835,58 @@ xp0:    lda #0
         jsr tprint
         rts
 
-; nump: DISPL/DISPH = ACC -> DBUF -> TB -> tprint
+; pitem: one PRINT item, string or numeric. A string item composes
+; through strexpr and appends to TB; a numeric one goes through expr
+; then nump, whose digits land on the same cursor.
+pitem:  jsr skipsp
+        lda (CPTR),y
+        cmp #'"'
+        beq pi_s
+        cmp #$41
+        bcc pi_n
+        cmp #$5B
+        bcs pi_n
+        iny             ; letter: peek the next char for $
+        lda (CPTR),y
+        dey
+        cmp #'$'
+        beq pi_s
+pi_n:   jsr expr
+        jsr nump
+        rts
+pi_s:   jsr strexpr
+        sty T0          ; park the parse index: the copy uses y
+        ldy #0
+pi1:    cpy SLEN
+        bcs pi2
+        lda SSCR,y
+        jsr tputc       ; tputc rewrites y, so reload the source index
+        iny
+        bne pi1
+pi2:    ldy T0
+        rts
+
+; tputc: append A to TB at TBLEN, capped at 31 chars. Clobbers y.
+tputc:  ldy TBLEN
+        cpy #31
+        bcs tpc1        ; full row: truncate silently
+        sta TB,y
+        inc TBLEN
+tpc1:   rts
+
+; nump: ACC -> DBUF (LSB-first via to_dec) -> TB cursor. The final
+; tprint is xprint's, so a list shares one row.
 nump:   lda ACC
         sta DISPL
         lda ACCH
         sta DISPH
         jsr to_dec
-        ldy DLEN
-        ldx #0
-npl:    dey
-        lda DBUF,y
-        sta TB,x
-        inx
-        cpy #0
-        bne npl
-        lda #0
-        sta TB,x
-        lda #<TB
-        sta MSGLO
-        lda #TB/$100
-        sta MSGHI
-        jsr tprint
+        ldx DLEN
+np1:    dex             ; digits come out LSB-first: walk MSB-first
+        lda DBUF,x
+        jsr tputc       ; tputc owns y, so x indexes DBUF
+        cpx #0
+        bne np1
         rts
 
 ; ady: y += A (tiny shared helper for the keyword skips)
@@ -814,7 +896,7 @@ ady:    clc
         adc T0
         tay
         rts
-; --- xlet: LET var = expr. y at the L of the keyword --------------------
+; --- xlet: LET var = expr or LET var$ = string-expr. y at the L ---------
 xlet:   lda #3
         jsr ady         ; past LET
         jsr skipsp
@@ -830,6 +912,8 @@ xlet:   lda #3
         iny
         jsr skipsp
         lda (CPTR),y
+        cmp #'$'
+        beq xlstr
         cmp #'='
         bne xl_e
         iny
@@ -843,6 +927,35 @@ xlet:   lda #3
         lda ACCH
         sta VARS+1,x
         rts
+xlstr:  iny             ; past $
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'='
+        bne xl_e
+        iny
+        jsr strexpr      ; -> SSCR/SLEN
+        lda VIDX
+        asl a
+        asl a            ; VIDX is already *2: *4 = 8-byte slots
+        clc
+        adc #<STRV
+        sta SPTR
+        lda #STRV/$100
+        adc #0
+        sta SPTRH
+        ldy #7           ; zero the slot first: shorter values end in NULs
+xl0:    lda #0
+        sta (SPTR),y
+        dey
+        bpl xl0
+        ldy #0
+xl1:    cpy SLEN
+        bcs xl2
+        lda SSCR,y
+        sta (SPTR),y
+        iny
+        bne xl1
+xl2:    rts
 xl_e:   jmp xerr
 ; --- xgoto: GOTO lineno. y at the G. Repositions CPTR to the target -----
 xgoto:  lda #4
@@ -1148,20 +1261,27 @@ xn_exit:
         rts              ; fall past NEXT
 xn_e:   jmp xerr
 
-; --- xinput: INPUT var. Prints "? " on row 8, reads a line through the
-; one-key buffer (backspace works), parses digits into the variable -----
+; --- xinput: INPUT var|var$. Prints "? " on row 8, reads a line through
+; the one-key buffer (backspace works), parses digits or copies a string
 xinput: lda #5
         jsr ady          ; past INPUT
+        lda #0
+        sta SINF         ; numeric unless the target is var$
         jsr skipsp
         lda (CPTR),y
         cmp #$41
-        bcc xi_e
+        bcc xi_ej
         cmp #$5B
-        bcs xi_e
+        bcs xi_ej
         sec
         sbc #$41
         asl a
         sta VIDX
+        iny
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'$'
+        beq xistr_j
         lda #0
         sta IBLEN
         sta IBUF         ; fresh empty line
@@ -1182,7 +1302,11 @@ xin1:   lda $5800
 xin_b:  jsr hbksp
         jsr rprompt
         jmp xin1
-xin_d:  lda VIDX
+xi_ej:  jmp xerr         ; branch-range trampolines (dead cell: only
+xistr_j: jmp xistr        ; branch targets land here)
+xin_d:  lda SINF
+        bne xin_s
+        lda VIDX
         pha              ; park the target index: pnum clobbers VIDX
         lda CPTR
         pha
@@ -1205,7 +1329,126 @@ xin_d:  lda VIDX
         lda ACCH
         sta VARS+1,x
         rts
+xin_s:  lda VIDX
+        asl a
+        asl a            ; VIDX is already *2: *4 = 8-byte slots
+        clc
+        adc #<STRV
+        sta SPTR
+        lda #STRV/$100
+        adc #0
+        sta SPTRH
+        ldy #7           ; zero the slot: shorter lines end in NULs
+xi0:    lda #0
+        sta (SPTR),y
+        dey
+        bpl xi0
+        ldy #0
+        lda IBLEN
+        beq xi3          ; empty Enter: the slot stays ""
+xin1c:  cpy #7
+        bcs xi3          ; cap at 7 chars
+        cpy IBLEN
+        bcs xi3
+        lda IBUF,y
+        sta (SPTR),y
+        iny
+        bne xin1c
+xi3:    rts
+xistr:  lda #1
+        sta SINF
+        lda #0
+        sta IBLEN
+        sta IBUF         ; fresh empty line
+        jsr rprompt
+        jmp xin1         ; same prompt/key loop as the numeric path
 xi_e:   jmp xerr
+
+; --- strings: A$-Z$ (7 chars max), quoted literals, + concat, LEN() -----
+; strexpr: compose a string expression into SSCR with length SLEN.
+; Grammar: sfactor { + sfactor }. y is the parse index into (CPTR),y on
+; entry and on exit (past the last factor). The numeric side calls this
+; only from flen, where the running sum is parked on the hardware stack.
+strexpr:
+        lda #0
+        sta SLEN
+        sta SSCR        ; SSCR[0] = NUL: an empty compose is ""
+sx0:    jsr sfactor
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'+'
+        bne sx1
+        iny
+        jmp sx0
+sx1:    rts
+
+; sfactor: a quoted literal or a string variable. Anything else is left
+; unconsumed (y untouched) so the numeric parser can take over.
+sfactor:
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'"'
+        bne sf1
+        iny             ; literal: copy chars until the closing quote
+sf0:    lda (CPTR),y
+        beq sf0u        ; NUL before the quote: unterminated
+        cmp #'"'
+        beq sf0e
+        sty T0          ; park the parse index: sputc rewrites y
+        jsr sputc
+        ldy T0
+        iny
+        jmp sf0
+sf0u:   jmp fpar_e
+sf0e:   iny
+        rts
+sf1:    cmp #$41
+        bcc sf9         ; not a letter: leave it unconsumed
+        cmp #$5B
+        bcs sf9
+        iny             ; peek the next char for $
+        lda (CPTR),y
+        dey
+        cmp #'$'
+        bne sf9         ; a plain letter: the numeric factor owns it
+        ; string variable: slot at STRV + 8*(c-'A'). VIDX belongs to the
+        ; numeric LET/INPUT side, so the slot pointer is built locally
+        sty T0          ; park the parse index through the copy
+        lda (CPTR),y    ; reload the letter: the $ peek clobbered A
+        sec
+        sbc #$41
+        asl a
+        asl a
+        asl a           ; *8 = 8-byte slots
+        clc
+        adc #<STRV
+        sta SPTR
+        lda #STRV/$100
+        adc #0
+        sta SPTRH
+        lda T0
+        clc
+        adc #2          ; past the letter and $: T0 = the parse index
+        sta T0          ; past "X$", so sf3 restores the consumed index
+        ldy #0          ; (zp),y reads the slot; sputc owns y, so the
+sf2:    lda (SPTR),y    ; source index reloads from SLEN each append
+        beq sf3         ; slot NUL: copied it all
+        jsr sputc
+        ldy SLEN        ; SLEN froze at 7 if truncating: loop still ends
+        cpy #7
+        bcc sf2
+sf3:    ldy T0
+        rts
+sf9:    rts             ; not a string factor
+
+; sputc: append A to SSCR at SLEN, capped at 7 chars. Clobbers y.
+sputc:  ldy SLEN
+        cpy #7
+        bcs sp0         ; full: truncate silently
+        sta SSCR,y
+        iny
+        sty SLEN
+sp0:    rts
 
 ; --- xpoke: POKE addr, val. y at the P of POKE ---------------------------
 xpoke:  lda #4
@@ -1467,7 +1710,16 @@ xn1:    lda #0
         inx
         cpx #52
         bcc xn1
+        jsr szero
         jsr hcln
+        rts
+
+; szero: clear the 26 string slots (208 bytes, exactly one page).
+szero:  lda #0
+        tax
+sz_l:   sta $1200,x
+        inx
+        bne sz_l
         rts
 
 ; --- xerr: print ERR and abort the current run --------------------------

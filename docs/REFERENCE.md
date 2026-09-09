@@ -89,8 +89,31 @@ Demos live in `software/*.s` — `hello.s` (text via 8×8 font table), `snake.s`
 (playable), `cube.s` (wireframe, uses `.align`), `tune.s` (beeper melody),
 `paint.s` (keyboard drawing on the 2bpp color framebuffer: arrows move a
 fat-pixel cursor, `z` plots, `x` erases, `c` cycles color, `n` clears,
-`s`/`l` save/load through a $6000 shadow). Start from whichever is closest
+`s`/`l` save/load through a $6000 shadow), and `basic.s` (a tiny interpreter:
+line-numbered programs with direct RUN/LIST/NEW/END, LET/PRINT, IF...GOTO,
+FOR/NEXT with signed STEP and nesting, INPUT, RND, PEEK/POKE, and string
+variables A$–Z$ (7 chars max) with quoted literals, `+` concatenation, mixed
+`;` PRINT lists and `LEN()`). Start from whichever is closest
 to what you want.
+
+## BASIC
+
+`software/basic.s` is a tiny interpreter on the terminal: a numbered line is
+stored, a direct command (RUN, LIST, NEW, END, GOTO, IF, PRINT, POKE) runs
+immediately, and each PRINT lands one row on the terminal (the ASCII mirror
+at `$2500` is the headless test contract).
+
+- Statements: `LET` (numeric var or `var$` = string expr), `PRINT` with a
+  `;`-separated list of literals, string vars and numeric items, `IF cond
+  GOTO n` with 16-bit compares, `FOR var = a TO b [STEP s]` / `NEXT` (signed
+  steps, nesting), `GOTO`, `INPUT` (numeric or string), `POKE addr, val`, `END`.
+- Numeric expressions: 16-bit integer `+ - * /` with precedence and parens,
+  unary minus, variables A–Z, `PEEK(addr)`, `RND`, comparison ops.
+- Strings: 26 slots A$–Z$ at `$1200`, 7 chars max — longer literals and
+  concats truncate silently; quoted literals, `+` concatenation, mixed `;`
+  PRINT lists, `LEN(str-expr)` → 0..7. An unterminated literal is ERR.
+- A parse or runtime fault prints ERR and aborts the run; NEW clears the
+  program, variables and string slots.
 
 ## Toolchain
 
