@@ -32,3 +32,4 @@
 - ☑ Demo/app: editor - an 8-line x 28-column text editor with a blinking cursor, insert/backspace/motion, headless-tested through its $1000 text block
 - ☑ Demo/app: basic - a tiny BASIC interpreter: line-numbered programs, GOTO, LET/PRINT expressions (parens, unary minus), IF...GOTO with 16-bit and string compares, FOR/NEXT with signed STEP and nesting, GOSUB/RETURN (4-deep return stack with FOR-depth snapshot), INPUT, RND, PEEK/POKE, string variables A$-Z$ with quoted literals, + concatenation, mixed ';' PRINT lists and LEN(), headless-tested through its $2500 terminal mirror
 - ☑ Demo/app: paint - keyboard drawing on the 2bpp color framebuffer: fat-pixel cursor, plot/erase/color-cycle, clear, save/load through a $6000 shadow, headless-tested through framebuffer bytes
+- ☑ Demo: sprites - two XOR sprites bouncing off the video edges, the whole motion loop running out of the vsync IRQ handler, beeper blips on bounce over a 4px checkerboard
