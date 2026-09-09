@@ -773,21 +773,38 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
             continue;
         }
         let mut a = addr as usize;
-        let put = |a: usize, b: u8, segments: &mut Vec<(u16, Vec<u8>)>| {
+        let put = |a: usize,
+                   b: u8,
+                   line: usize,
+                   segments: &mut Vec<(u16, Vec<u8>)>|
+         -> Result<(), Error> {
+            // two .org regions may not share a byte: overlapping segments
+            // load in container order, so the later one silently clobbers
+            // the earlier one's tail (basic.s's font ate its error strings)
+            for seg in segments.iter() {
+                let s = usize::from(seg.0);
+                if a >= s && a < s + seg.1.len() {
+                    return Err(err(
+                        line,
+                        &format!("address ${a:04X} is emitted twice (overlapping segments)"),
+                    ));
+                }
+            }
             if let Some(last) = segments
                 .last_mut()
                 .filter(|last| usize::from(last.0) + last.1.len() == a)
             {
                 last.1.push(b);
-                return;
+                return Ok(());
             }
             segments.push((a as u16, vec![b]));
+            Ok(())
         };
         match rec {
             Rec::BankMarker(_) => {}
             Rec::Raw(bytes) => {
                 for b in bytes {
-                    put(a, b, &mut segments);
+                    put(a, b, 0, &mut segments)?;
                     a += 1;
                 }
             }
@@ -798,12 +815,12 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                     })?;
                     match kind {
                         DataItem::Byte => {
-                            put(a, v as u8, &mut segments);
+                            put(a, v as u8, line, &mut segments)?;
                             a += 1;
                         }
                         DataItem::Word => {
-                            put(a, v as u8, &mut segments);
-                            put(a + 1, (v >> 8) as u8, &mut segments);
+                            put(a, v as u8, line, &mut segments)?;
+                            put(a + 1, (v >> 8) as u8, line, &mut segments)?;
                             a += 2;
                         }
                     }
@@ -816,7 +833,7 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                 expr,
             } => {
                 // `encode` was validated in pass 1, so this cannot fail.
-                put(addr as usize, encode(op, mode).unwrap(), &mut segments);
+                put(addr as usize, encode(op, mode).unwrap(), line, &mut segments)?;
                 let operand_at = addr as usize + 1;
                 let operand = || -> Result<i32, Error> {
                     resolve(expr.as_ref().unwrap(), &syms, addr)
@@ -825,12 +842,12 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                 match mode {
                     Mode::Imp | Mode::Acc => {}
                     Mode::Imm | Mode::Zp | Mode::Zpx | Mode::Zpy | Mode::Izx | Mode::Izy => {
-                        put(operand_at, operand()? as u8, &mut segments);
+                        put(operand_at, operand()? as u8, line, &mut segments)?;
                     }
                     Mode::Abs | Mode::Abx | Mode::Aby | Mode::Ind => {
                         let v = operand()?;
-                        put(operand_at, v as u8, &mut segments);
-                        put(operand_at + 1, (v >> 8) as u8, &mut segments);
+                        put(operand_at, v as u8, line, &mut segments)?;
+                        put(operand_at + 1, (v >> 8) as u8, line, &mut segments)?;
                     }
                     Mode::Rel => {
                         let target = operand()?;
@@ -838,7 +855,7 @@ pub fn assemble(src: &str) -> Result<Binary, Error> {
                         if !(-128..=127).contains(&off) {
                             return Err(err(line, "branch target out of range"));
                         }
-                        put(operand_at, off as u8, &mut segments);
+                        put(operand_at, off as u8, line, &mut segments)?;
                     }
                 }
             }
@@ -855,6 +872,18 @@ mod tests {
 
     fn asm(src: &str) -> Vec<u8> {
         assemble(src).unwrap().segments[0].1.clone()
+    }
+
+    #[test]
+    fn overlapping_orgs_are_rejected() {
+        // two .org regions may not share a byte — the container loads
+        // segments in order, so the later one silently clobbers the
+        // earlier one's tail (this ate basic.s's error strings once)
+        let e = assemble(".org $E000\nlda #0\n.org $E001\nlda #1").unwrap_err();
+        assert!(
+            e.msg.contains("emitted twice"),
+            "expected an overlap error, got {e:?}"
+        );
     }
 
     #[test]
