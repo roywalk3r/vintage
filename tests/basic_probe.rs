@@ -436,3 +436,59 @@ fn basic_if_string_direct_taken_retires() {
     let hit = (0..8).any(|r| term_row(&m, r) == "5");
     assert!(hit, "follow-up PRINT must run cleanly after a direct string IF");
 }
+
+#[test]
+fn basic_gosub_return_roundtrip() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 GOSUB 100\r20 PRINT 1\r100 PRINT 2\r110 RETURN\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "2", "GOSUB runs the callee first");
+    assert_eq!(term_row(&m, 3), "1", "RETURN resumes after the GOSUB line");
+}
+
+#[test]
+fn basic_gosub_nested() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 GOSUB 100\r20 PRINT 1\r30 END\r100 GOSUB 150\r110 PRINT 2\r120 RETURN\r150 PRINT 3\r160 RETURN\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    // the nesting spans frames; let the run settle before asserting
+    for _ in 0..4 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "3");
+    assert_eq!(term_row(&m, 3), "2");
+    assert_eq!(term_row(&m, 4), "1");
+}
+
+#[test]
+fn basic_return_without_gosub_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 RETURN\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    assert_eq!(term_row(&m, 2), "ERR");
+}
+
+#[test]
+fn basic_gosub_caller_for_survives_return() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=1 TO 3\r20 GOSUB 50\r30 NEXT I\r40 PRINT A\r45 END\r50 LET A=A+1\r60 FOR J=1 TO 5\r70 RETURN\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..4 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "3", "RETURN restores the caller's FOR depth");
+}
+
+#[test]
+fn basic_direct_return_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"RETURN\r");
+    assert_eq!(term_row(&m, 2), "ERR", "direct RETURN = RETURN without GOSUB");
+}
+
+#[test]
+fn basic_direct_gosub_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"GOSUB 100\r");
+    assert_eq!(term_row(&m, 2), "ERR", "direct GOSUB has no return stack");
+}

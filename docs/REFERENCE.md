@@ -110,6 +110,12 @@ at `$2500` is the headless test contract).
   prefix of the other the lengths decide), `FOR var = a TO b [STEP s]` /
   `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
   `POKE addr, val`, `END`.
+- Subroutines: `GOSUB n` jumps to line `n` remembering the slot after the
+  GOSUB; `RETURN` resumes there. Up to 4 nested GOSUBs; the FOR/NEXT depth
+  is snapshotted at call time, so loops opened inside a subroutine are
+  discarded on RETURN while the caller's stay live. Direct-mode GOSUB and
+  RETURN (typed without a line number) are ERR — there is no return address
+  outside a running program.
 - Numeric expressions: 16-bit integer `+ - * /` with precedence and parens,
   unary minus, variables A–Z, `PEEK(addr)`, `RND`, comparison ops.
 - Strings: 26 slots A$–Z$ at `$1200`, 7 chars max — longer literals and

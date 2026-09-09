@@ -94,6 +94,8 @@ GLYPH = $E6
 GHI    = $E7
 CHIDX = $E8
 PBUF   = $2780        ; input-row compose buffer (33 bytes)
+GSTK   = $2721        ; GOSUB frames: 4 x [ret lo @+0, ret hi @+4, FSP @+8]
+GSP    = $272D        ; live GOSUB depth, 0..4
 
 ; --- boot: clear everything, print READY, then the poll loop ------------
 start:  jsr clear_scr
@@ -178,8 +180,13 @@ xlj_j:  jsr xlist
         jmp hcln         ; xlist rts'd past hcln, leaving the line buffered
 dexec:  lda IBUF
         cmp #'R'
-        beq drr_j
-        cmp #'N'
+        bne d1
+        lda IBUF+1
+        cmp #'E'         ; direct RETURN = RETURN without GOSUB: ERR
+        beq dxr
+        jmp drr_j        ; RUN
+dxr:    jmp xerr
+d1:     cmp #'N'
         beq dnew
         cmp #'E'         ; END direct: retire the line, not just the flag
         beq dhcln_j
@@ -195,8 +202,13 @@ dexec:  lda IBUF
 d2:     cmp #'P'
         beq dpk
         cmp #'G'
-        beq dgoto_j
-        cmp #'I'
+        bne d3
+        lda IBUF+2
+        cmp #'S'         ; direct GOSUB: ERR (no direct-mode return stack)
+        beq dxg
+        jmp dgoto_j
+dxg:    jmp xerr
+d3:     cmp #'I'
         beq difi
         jmp xerr         ; unknown direct command
 dnew:   lda IBUF+2
@@ -769,7 +781,17 @@ xs1:    cmp #'L'
         rts
 xs2:    cmp #'G'
         bne xs3
-        jsr xgoto
+        iny
+        iny
+        lda (CPTR),y     ; 3rd char: S = GOSUB, else GOTO
+        dey
+        dey
+        cmp #'S'
+        bne xs2g
+        jsr xgosub
+        sec
+        rts
+xs2g:   jsr xgoto
         sec            ; xgoto leaves C set either way (xerr aborts too)
         rts
 xs3:    cmp #'I'
@@ -792,7 +814,17 @@ xs6:    cmp #'N'
         bne xs7
         jsr xnext
         rts            ; xnext returns C: 1 resume at the FOR's successor
-xs7:    jmp xerr       ; unknown keyword: ERR, abort
+xs7:    cmp #'R'
+        bne xs8
+        iny
+        lda (CPTR),y     ; 2nd char: E = RETURN, else unknown keyword
+        dey
+        cmp #'E'
+        bne xs8
+        jsr xret
+        sec
+        rts
+xs8:    jmp xerr       ; unknown keyword: ERR, abort
 xpk_j:  jsr xpoke
         clc
         rts
@@ -1774,8 +1806,9 @@ drun:   lda NUMPROG
         lda #PROG/$100
         sta CPTRH
         lda #0
-        sta FSP          ; a run starts with no live loops (xloop is re-entered
-        jsr xloop        ; per statement, so this can't live at its top)
+        sta FSP          ; a run starts with no live loops and no return
+        sta GSP          ; frames (xloop is re-entered per statement, so this
+        jsr xloop        ; can't live at its top)
         jmp hcln
 drun0:  jsr hcln
         rts
@@ -1811,6 +1844,7 @@ xerr:   lda #<errmsg
         jsr tprint
         lda #0
         sta FSP          ; a failed run leaves no live loops behind
+        sta GSP          ; ...nor return frames
         lda #1
         sta ERRF
         rts
@@ -2143,3 +2177,62 @@ xl_w:   lda #0
         jmp xl_l
 
 xl_9:   rts
+
+; --- xgosub / xret: GOSUB lineno / RETURN --------------------------------
+; Lives past the font ($E000 region is full). A frame is [ret lo @+0,
+; ret hi @+4, FSP @+8], 4 levels deep. The FSP snapshot makes RETURN
+; discard FOR levels opened inside the callee while the caller's stay
+; live. The return address is parked on the CPU stack across findline,
+; which re-points CPTR at the found slot — reading CPTR after the call
+; would push the callee's slot instead of the GOSUB's successor.
+xgosub:
+        lda #5
+        jsr ady          ; past GOSUB
+        jsr skipsp
+        jsr pnum
+        lda CPTR         ; park CPTR+32 (the return slot) over findline
+        clc
+        adc #32
+        pha
+        lda CPTRH
+        adc #0
+        pha
+        jsr findline
+        bcs gs1
+        pla              ; no such line: unwind the park, ERR
+        pla
+        jmp xerr
+gs1:    pla
+        sta T0H          ; the parked return address
+        pla
+        sta T0
+        ldx GSP
+        cpx #4
+        bcs gs_of        ; deeper than 4: ERR
+        lda T0
+        sta GSTK,x
+        lda T0H
+        sta GSTK+4,x
+        lda FSP
+        sta GSTK+8,x     ; snapshot: RETURN discards the callee's FOR levels
+        inc GSP
+        sec              ; CPTR already points at the callee (findline set it)
+        rts
+gs_of:  jsr xerr
+        sec
+        rts
+xret:   ldx GSP
+        beq gs_e         ; RETURN without GOSUB: ERR
+        dex
+        stx GSP
+        lda GSTK,x
+        sta CPTR
+        lda GSTK+4,x
+        sta CPTRH
+        lda GSTK+8,x
+        sta FSP          ; restore the caller's FOR depth
+        sec
+        rts
+gs_e:   jsr xerr
+        sec
+        rts
