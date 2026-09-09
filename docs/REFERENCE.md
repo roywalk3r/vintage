@@ -99,9 +99,9 @@ to what you want.
 ## BASIC
 
 `software/basic.s` is a tiny interpreter on the terminal: a numbered line is
-stored, a direct command (RUN, LIST, NEW, END, GOTO, IF, PRINT, POKE) runs
-immediately, and each PRINT lands one row on the terminal (the ASCII mirror
-at `$2500` is the headless test contract).
+stored, a direct command (RUN, LIST, NEW, END, GOTO, IF, PRINT, POKE, PLOT,
+UNPLOT) runs immediately, and each PRINT lands one row on the terminal (the
+ASCII mirror at `$2500` is the headless test contract).
 
 - Statements: `LET` (numeric var or `var$` = string expr), `PRINT` with a
   `;`-separated list of literals, string vars and numeric items, `IF cond
@@ -109,7 +109,10 @@ at `$2500` is the headless test contract).
   exprs: the first differing character decides, and when one side is a
   prefix of the other the lengths decide), `FOR var = a TO b [STEP s]` /
   `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
-  `POKE addr, val`, `END`.
+  `POKE addr, val`, `PLOT x, y` / `UNPLOT x, y` (set/clear one pixel of the
+  1bpp framebuffer at `$4000`: both coords are full expressions, x must land
+  0–255 and y 0–191 — anything else is ERR — and the bit lands at
+  `SCREEN + y*32 + x/8`, mask `$80 >> (x&7)`), `END`.
 - Data pool: `DATA item[,item...]` lines are inert when executed; `READ`
   vars pulls the next literal(s) — numerics through the shared digit-run
   parser (an optional leading `-` negates, values wrap mod 65536), strings

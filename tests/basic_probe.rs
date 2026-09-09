@@ -585,3 +585,48 @@ fn basic_read_type_mismatch_errors() {
     type_keys(&mut m, &mut cpu, b"10 DATA HI\r20 READ A\rRUN\r");
     assert_eq!(term_row(&m, 2), "ERR", "a bare word is not a numeric literal");
 }
+
+// PLOT writes the fb bit at $4000 + y*32 + x/8, mask $80 >> (x&7) — MSB
+// leftmost, 32 bytes per scanline. Row 100 keeps clear of the terminal's
+// glyph rows. Direct mode plots immediately; a program loop fills bytes.
+#[test]
+fn basic_plot_direct_sets_fb_bit() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PLOT 0,100\r");
+    assert_eq!(m.fb()[100 * 32], 0x80, "(0,100) is the MSB of the byte");
+    type_keys(&mut m, &mut cpu, b"PLOT 8,100\r");
+    assert_eq!(m.fb()[100 * 32 + 1], 0x80, "x=8 lands in the next byte");
+    type_keys(&mut m, &mut cpu, b"UNPLOT 0,100\r");
+    assert_eq!(m.fb()[100 * 32], 0x00, "UNPLOT clears the same bit");
+}
+
+#[test]
+fn basic_plot_expression_coords() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PLOT 3+5,100\r");
+    assert_eq!(m.fb()[100 * 32 + 1], 0x80, "x=8: second byte, bit 7");
+    type_keys(&mut m, &mut cpu, b"PLOT 8/2,100\r");
+    assert_eq!(m.fb()[100 * 32], 0x08, "x=4: first byte, bit $80>>4");
+}
+
+#[test]
+fn basic_plot_out_of_range_errors() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"PLOT 0,192\r");
+    assert_eq!(term_row(&m, 2), "ERR", "y tops out at 191");
+    let (mut m2, mut cpu2) = boot();
+    type_keys(&mut m2, &mut cpu2, b"PLOT 256,0\r");
+    assert_eq!(term_row(&m2, 2), "ERR", "x must fit one byte");
+}
+
+#[test]
+fn basic_plot_program_row() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=0 TO 7\r20 PLOT I,100\r30 NEXT I\r40 PRINT \"DONE\"\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(m.fb()[100 * 32], 0xFF, "PLOT I,100 for I=0..7 fills the byte");
+    assert_eq!(term_row(&m, 2), "DONE", "the loop completed without aborting");
+}

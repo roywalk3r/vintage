@@ -34,6 +34,9 @@ TBLEN  = $67           ; PRINT compose cursor into TB
 SINF   = $68           ; INPUT is targeting a string variable
 RDLO   = $69           ; DATA/READ data cursor: slot base = scanning,
 RDHI   = $6A           ; otherwise mid-list inside a DATA line's items
+PX      = $6B           ; PLOT x (0..255), y (0..191), mode: 1 set 0 clear
+PLY     = $6C
+XPLOTF  = $6D
 
 ; --- zero page ---
 IBLEN  = $12           ; input buffer length
@@ -210,8 +213,11 @@ d2:     cmp #'P'
         beq dxg
         jmp dgoto_j
 dxg:    jmp xerr
+dupl_j: jmp dupl         ; branch trampoline (dead cell: dxg always jumps)
 d3:     cmp #'I'
         beq difi
+        cmp #'U'
+        beq dupl_j       ; direct UNPLOT
         jmp xerr         ; unknown direct command
 dnew:   lda IBUF+2
         cmp #'X'
@@ -227,6 +233,8 @@ dnx_j:  lda #<IBUF
 dpk:    lda IBUF+1
         cmp #'O'
         beq dpk_j        ; POKE
+        cmp #'L'
+        beq dpl_j        ; PLOT
         jmp dprint       ; PRINT
 dpk_j:  lda #<IBUF
         sta CPTR
@@ -257,6 +265,8 @@ dprint:
         ldy #0
         jsr xprint
         jmp hcln
+dpl_j:  jmp dplf         ; far: direct PLOT (E000 is full)
+dupl:   jmp dupf         ; far: direct UNPLOT
 dgc_j:  jmp hcln
 dgoto_j:
         lda #<IBUF
@@ -777,7 +787,10 @@ xstmt:  ldy #3
         dey              ; peek 2nd char without consuming: handlers
         cmp #'O'         ; expect y at the keyword's first letter
         beq xpk_j
+        cmp #'L'
+        beq xpl_j        ; PLOT shares PRINT's first letter
         jmp xprint
+xpl_j:  jmp xplotf       ; far: PLOT set, UNPLOT clear, shared core
 xs1:    cmp #'L'
         bne xs2
         jsr xlet
@@ -827,8 +840,11 @@ xs7:    cmp #'R'
         bne xs8
         jmp xr3          ; far dispatch: READ / RETURN / RESTORE, C per handler
 xs7d:   cmp #'D'
-        bne xs8
+        bne xs7e
         jmp xd3          ; far: DATA is a no-op statement (data lives here)
+xs7e:   cmp #'U'
+        bne xs8
+        jmp xunplf       ; far: UNPLOT — U has no other keywords yet
 xs8:    jmp xerr       ; unknown keyword: ERR, abort
 xpk_j:  jsr xpoke
         clc
@@ -2577,3 +2593,111 @@ rdadv_e:
         jmp xerr
 
 DTXT:   .text "DATA"
+
+; --- PLOT / UNPLOT: set or clear one pixel at expr x, expr y -----------
+; x must be 0..255, y 0..191 — anything else ERRs. The bit lands at
+; SCREEN + y*32 + x/8, mask $80 >> (x&7) (MSB leftmost). PLOT and UNPLOT
+; share the core; XPLOTF picks ora vs and at the modify. Both parse from
+; y at the keyword's first letter (both keywords are 4 chars).
+xplotf: lda #1
+        .byte $2C       ; BIT abs eats 2 bytes: PLOT falls through to the
+xunplf: lda #0          ; store with A=1; UNPLOT enters at the lda with A=0
+        sta XPLOTF
+        jsr plxy        ; parse "x,y" -> PX, PLY
+        ; bit mask: $80 >> (PX & 7) — the count-0 case can't share the
+        ; shift loop (X=0 would run it 256 times), so it gets its own load
+        lda PX
+        and #7
+        beq xpmk0        ; x&7 = 0: mask stays $80
+        tax
+        lda #$80
+xpmk:   lsr a
+        dex
+        bne xpmk
+        jmp xpmk1
+xpmk0:  lda #$80
+xpmk1:  sta T1          ; mask parked while the address is built
+        ; address: SRC/SRCH = SCREEN + PLY*32 + PX/8
+        lda PLY
+        sta T0
+        lda #0
+        sta T0H
+        asl T0
+        rol T0H         ; y*2
+        asl T0
+        rol T0H         ; y*4
+        asl T0
+        rol T0H         ; y*8
+        asl T0
+        rol T0H         ; y*16
+        asl T0
+        rol T0H         ; y*32
+        lda PX
+        lsr a
+        lsr a
+        lsr a           ; x/8
+        clc
+        adc T0
+        sta SRC
+        lda #0
+        adc T0H         ; carry from the lo-byte add
+        clc
+        adc #SCREEN/$100
+        sta SRCH
+        ; read-modify-write the one bit
+        ldy #0
+        lda (SRC),y
+        ldx XPLOTF
+        bne xpset
+        eor #$FF
+        and T1
+        jmp xpsto
+xpset:  ora T1
+xpsto:  sta (SRC),y
+        clc
+        rts
+
+; plxy: parse "x,y" — two full expressions, ','-separated — into PX/PLY.
+; Enters with y at the keyword's first letter; both keywords are 4 chars.
+; x must land 0..255 and y 0..191: a high byte or y >= 192 is ERR.
+plxy:   lda #4
+        jsr ady         ; past the keyword
+        jsr skipsp
+        jsr expr
+        lda ACCH
+        bne plerr
+        lda ACC
+        sta PX
+        jsr skipsp
+        lda (CPTR),y
+        cmp #','
+        bne plerr
+        iny
+        jsr skipsp
+        jsr expr
+        lda ACCH
+        bne plerr
+        lda ACC
+        cmp #192
+        bcs plerr
+        sta PLY
+        rts
+plerr:  jmp xerr
+
+; --- direct-mode PLOT/UNPLOT: CPTR=IBUF, parse from the line start -----
+; Same shape as dpk_j/din_j/dprint up in E000, but living here where
+; there's room; E000 keeps only 3-byte trampolines.
+dplf:   lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xplotf       ; far PLOT entry: parse "x,y", set the bit
+        jmp hcln
+dupf:   lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xunplf       ; far UNPLOT entry: clear it again
+        jmp hcln
