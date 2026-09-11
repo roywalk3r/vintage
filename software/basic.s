@@ -1187,7 +1187,7 @@ xi_b2:  lda T1
 xi_b1:  lda T1
         cmp #2
         beq xi_t
-xi_f:   clc
+xi_f:   jsr xelsef
         rts
 xi_bad:
         jsr xerr
@@ -2998,6 +2998,71 @@ xth_n:  jsr pnum
         rts
 xth_ok: sec
         rts
+
+        ; NOT taken: a trailing ELSE runs its branch instead of a skip
+xelsef:   lda #0
+        sta T1            ; in-quote flag, 0 = outside quotes (T1 is dead here)
+xelsef1: lda (CPTR),y
+        beq xelse_n         ; NUL: no ELSE on this line, advance as before
+        cmp #'"'
+        bne xelsef3        ; not a quote: try a match at this position
+        lda T1
+        eor #1
+        sta T1            ; toggle in-quote, walk on
+        iny
+        jmp xelsef1
+xelsef3: cmp #'E'
+        bne xelsef4        ; not an E: walk on (no cursor parked)
+        tya
+        pha               ; candidate: park the scan cursor
+        iny
+        lda (CPTR),y
+        cmp #'L'
+        bne xelsef5        ; mismatch: pop, walk on
+        iny
+        lda (CPTR),y
+        cmp #'S'
+        bne xelsef5
+        iny
+        lda (CPTR),y
+        cmp #'E'
+        bne xelsef5
+        iny               ; all four matched: y at the char after ELSE
+        lda (CPTR),y
+        cmp #0
+        beq xelsef6        ; NUL right after: dangling ELSE — xstmy dispatches it to xerr
+        cmp #' '
+        bne xelsef5        ; not a standalone word: walk on
+xelsef6: pla
+        tay               ; y = the 'E' of ELSE
+        lda #4
+        jsr ady           ; past ELSE
+        jsr skipsp
+        lda (CPTR),y
+        cmp #$30
+        bcc xelsef8       ; below a digit: inline statement
+        cmp #$3A
+        bcc xelsef9       ; a digit: ELSE <line-no> jumps
+        jmp xelsef7       ; anything else: inline statement
+xelsef7: jsr xstmy        ; the post-ELSE statement runs per the chain contract
+        rts
+xelsef9: jsr pnum
+        jsr findline
+        bcs xelsef8
+        jsr xerr
+        sec
+        rts
+xelsef8: sec
+        rts
+xelsef4: iny
+        jmp xelsef1
+xelsef5: pla
+        tay
+        iny
+        jmp xelsef1
+xelse_n:  clc
+        rts
+
 
 ; --- far-region data: static strings and the vector stub ----------------
 ; Moved past the font ($E000 region is full). All are referenced via

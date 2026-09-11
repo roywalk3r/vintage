@@ -112,7 +112,13 @@ terminal (the ASCII mirror at `$2500` is the headless test contract).
   THEN accepts a line number (jump), `GOTO n`, or any statement inline —
   `IF 1=1 THEN PRINT 7` runs it and execution continues at the next line;
   anything after THEN that isn't a digit is parsed as that statement, so
-  unknown keywords are ERR. `FOR var = a TO b [STEP s]` /
+  unknown keywords are ERR. An optional `ELSE <line-no | statement>` after
+  the THEN body runs only when the condition is false: scanning forward
+  from the untaken `IF` to the line's next standalone `ELSE` (quoted
+  literals are skipped, so only text outside quotes pairs with the IF),
+  `ELSE n` jumps to line n and any other character starts an inline
+  statement there; a taken IF jumps away before any scan and never sees
+  its own ELSE, and an `ELSE` with nothing after it is ERR. `FOR var = a TO b [STEP s]` /
   `NEXT` (signed steps, nesting), `GOTO`, `INPUT` (numeric or string),
   `POKE addr, val`, `PLOT x, y` / `UNPLOT x, y` (set/clear one pixel of the
   1bpp framebuffer at `$4000`: both coords are full expressions, x must land
