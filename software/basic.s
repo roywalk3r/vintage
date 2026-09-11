@@ -5,9 +5,11 @@
 ; basic.s - line-numbered tiny BASIC: FOR/NEXT (with signed STEP), INPUT,
 ; LET/PRINT/GOTO/IF...GOTO/POKE as one-statement lines in a 32-slot
 ; program store, plus direct RUN, LIST, NEW, and immediate versions of
-; most statements. Expressions evaluate 16-bit over variables A-Z with
-; * / binding tighter than + -, parentheses, unary minus, and RND /
-; PEEK(addr) as primaries. The screen is an 8-row scrolling terminal
+; most statements. Expressions evaluate 16-bit over variables A-Z and the
+; 26 fixed 11-element arrays (DIM var(n) validates, A(expr) reads, LET
+; A(expr)=expr stores) with * / binding tighter than + -, parentheses,
+; unary minus, and RND / PEEK(addr) as primaries. The screen is an 8-row
+; scrolling terminal
 ; (rows 0-7) with the input line on row 8, and every printed row is
 ; mirrored as ASCII at $2500 for headless tests.
 ;
@@ -39,6 +41,7 @@ PLY     = $6C
 XPLOTF  = $6D
 RESEV  = $76           ; xloop: pending mid-slot resume offset ($FF = none);
                       ; NEXT's iteration and RETURN's resumption both set it
+AIDX   = $77           ; array-LET: parked 2*idx across the value parse
 
 ; --- zero page ---
 IBLEN  = $12           ; input buffer length
@@ -104,6 +107,8 @@ PBUF   = $2780        ; input-row compose buffer (33 bytes)
 GSTK   = $2721        ; GOSUB frames: 4 x [ret lo @+0, ret hi @+4, FSP @+8,
                       ; cur @+12]; cur = in-slot cursor for RETURN's resume
 GSP    = $2731        ; live GOSUB depth, 0..4
+ARY    = $1300        ; 26 fixed arrays A-Z, 11 two-byte elements each
+                      ; (0..10): 572 bytes, base = ARY + 22*(c-'A')
 
 ; --- boot: clear everything, print READY, then the poll loop ------------
 start:  jsr clear_scr
@@ -199,7 +204,7 @@ dxr:    jmp xerr
 d1:     cmp #'N'
         beq dnew
         cmp #'E'         ; END direct: retire the line, not just the flag
-        beq dhcln_j
+        beq dhe_j        ; trampoline: d3's dispatch cells shifted the target
         cmp #'L'
         bne d2
         lda IBUF+1
@@ -209,6 +214,7 @@ d1:     cmp #'N'
         ldy #0
         jsr xlet
         jmp hcln
+dhe_j:  jmp dhcln_j
 d2:     cmp #'P'
         beq dpk
         cmp #'G'
@@ -223,7 +229,10 @@ d3:     cmp #'I'
         beq difi
         cmp #'U'
         beq dupl_j       ; direct UNPLOT
+        cmp #'D'
+        beq dd_j         ; direct DIM
         jmp xerr         ; unknown direct command
+dd_j:   jmp ddimf        ; far: direct DIM (same shape as dpl_j/dupl_j)
 dnew:   lda IBUF+2
         cmp #'X'
         beq dnx_j        ; NEXT
@@ -541,10 +550,11 @@ factor: jsr skipsp
         cmp #':'
         bcs fac1
         jmp pnum         ; digit run: pnum leaves ACC and y set
+fac5_j: jmp fac5         ; branch-range trampoline: the array block pushed fac5 past bcc reach
 fac1:   cmp #$41
-        bcc fac5         ; below 'A': parens, minus, or nothing
+        bcc fac5_j       ; below 'A': parens, minus, or nothing
         cmp #$5B
-        bcs fac5
+        bcs fac5_j
         sta T1           ; park the letter: T1 is factor-local scratch
         iny
         lda (CPTR),y
@@ -560,7 +570,12 @@ fac3:   cmp #'N'
         lda T1
         cmp #'R'
         beq frnd         ; "RN..." -> RND
-fac4:   lda T1           ; plain variable: y is already past the letter
+fac4:   lda (CPTR),y     ; y is past the letter: '(' means an array element
+        cmp #'('
+        bne fac4v
+        jsr faread       ; array element read (faread lives in the far region)
+        rts
+fac4v:  lda T1           ; plain variable: y is already past the letter
         sec
         sbc #$41
         asl a
@@ -970,15 +985,16 @@ ady:    clc
         adc T0
         tay
         rts
+xlerr_j: jmp xl_e         ; branch-range trampoline (xlet grew with the array store)
 ; --- xlet: LET var = expr or LET var$ = string-expr. y at the L ---------
 xlet:   lda #3
         jsr ady         ; past LET
         jsr skipsp
         lda (CPTR),y
         cmp #$41
-        bcc xl_e        ; not a letter: ERR
+        bcc xlerr_j        ; not a letter: ERR
         cmp #$5B
-        bcs xl_e
+        bcs xlerr_j
         sec
         sbc #$41
         asl a
@@ -988,6 +1004,52 @@ xlet:   lda #3
         lda (CPTR),y
         cmp #'$'
         beq xlstr
+        cmp #'('
+        bne xlplain
+        ; LET A(idx) = expr: parse the index, validate 0..10, park 2*idx in
+        ; AIDX (free cells only — expr clobbers T0/T1 and VIDX), then parse
+        ; the value. The 2*k target park rides the stack across both parses.
+        iny              ; past '('
+        lda VIDX
+        pha              ; park the target 2*k across the index+value exprs
+        jsr expr         ; index -> ACC, y past it
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne xla_bad
+        iny              ; past ')'
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'='
+        bne xla_bad
+        iny              ; past '='
+        lda ACCH
+        bne xla_bad      ; index >= 256: ERR
+        lda ACC
+        cmp #11
+        bcs xla_bad      ; index > 10: ERR
+        asl a
+        sta AIDX         ; 2*idx parked across the value parse
+        jsr expr         ; value -> ACC, y past it
+        pla              ; VIDX (2*k) -> A
+        lsr a
+        tax
+        jsr arybase      ; SRC/SRCH = ARY shadow (ARY + 22*k; ACC/X/Y preserved)
+        tya
+        pha              ; park the parse position across the store
+        lda AIDX
+        tay              ; y = 2*idx
+        lda ACC
+        sta (SRC),y
+        lda ACCH
+        iny
+        sta (SRC),y
+        pla
+        tay              ; parse position restored for the chain check
+        rts
+xla_bad: pla
+        jmp xerr
+xlplain:                 ; plain 16-bit '=' path (y at the char after the name)
         cmp #'='
         bne xl_e
         iny
@@ -2029,26 +2091,6 @@ cloop:  sta $4000,x
 
 
 ; --- mul16 / div16 / to_dec: calc.s ports, cells match basic's zpage --
-; --- mul16: RES = M1 * M2 (low 16 bits), clobbers M1, M2 ----------------
-mul16:  lda #0
-        sta RES
-        sta RESH
-        ldx #16
-mloop:  lsr M2H
-        ror M2
-        bcc mshift
-        lda M1
-        clc
-        adc RES
-        sta RES
-        lda M1H
-        adc RESH
-        sta RESH
-mshift: asl M1
-        rol M1H
-        dex
-        bne mloop
-        rts
 
         .org $FFFA
         .word stub, start, stub
@@ -2355,10 +2397,15 @@ rdinit: lda #0
 ; xd3: DATA reached in execution order — the data itself is inert; skip it.
 ; Reached by jmp from xstmt with y at the keyword's first letter.
 xd3:    iny
-        lda (CPTR),y     ; 2nd char of DATA
+        lda (CPTR),y     ; 2nd char: A = DATA, I = DIM
         dey
         cmp #'A'
+        bne xd3d
+        clc
+        rts
+xd3d:   cmp #'I'
         bne xd3e
+        jsr xdim         ; DIM: parse+validate the sizes, no store
         clc
         rts
 xd3e:   jmp xerr
@@ -2781,6 +2828,148 @@ dupf:   lda #<IBUF
         ldy #0
         jsr xunplf       ; far UNPLOT entry: clear it again
         jmp hcln
+
+; --- DIM + the fixed array store -----------------------------------------
+; The 26 arrays A-Z are permanently allocated 11 two-byte elements each
+; (indices 0..10) at ARY + 22*(c-'A') — 572 bytes at $1300. DIM var(n)
+; [, var(n)]... only validates each n <= 10: reads of undimensioned arrays
+; return 0 (auto-DIM semantics at the classic default size 10) and re-DIM
+; is harmless because nothing is ever allocated. A(expr) reads and
+; LET A(expr)=expr writes go through arybase's table lookup; INPUT/READ
+; cannot target array elements.
+xdim:   lda #3
+        jsr ady          ; past DIM
+        jsr skipsp
+xd1:    jsr skipsp
+        lda (CPTR),y
+        cmp #$41
+        bcc xd_e         ; not a letter: ERR
+        cmp #$5B
+        bcs xd_e
+        iny
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'('
+        bne xd_e         ; DIM needs var(size)
+        iny              ; past '('
+        jsr skipsp
+        jsr expr         ; the declared size
+        lda ACCH
+        bne xd_e         ; 16-bit size: ERR
+        lda ACC
+        cmp #11
+        bcs xd_e         ; size > 10: ERR
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne xd_e         ; DIM needs var(size)
+        iny              ; past ')'
+        jsr skipsp
+        lda (CPTR),y
+        cmp #','
+        beq xd_next
+        cmp #':'
+        beq xd_ok        ; ':' (the chain separator) or NUL: done, leave y
+        cmp #0
+        bne xd_e         ; neither ',' nor ':' nor end-of-line: ERR
+xd_ok:  clc
+        rts
+xd_next: iny
+        jmp xd1
+xd_e:   jmp xerr
+
+; --- direct-mode DIM: same shape as dplf/dupf -----------------------------
+ddimf:  lda #<IBUF
+        sta CPTR
+        lda #IBUF/$100
+        sta CPTRH
+        ldy #0
+        jsr xdim
+        jmp hcln
+
+
+; --- mul16: RES = M1 * M2 (low 16 bits), clobbers M1, M2 ----------------
+mul16:  lda #0
+        sta RES
+        sta RESH
+        ldx #16
+mloop:  lsr M2H
+        ror M2
+        bcc mshift
+        lda M1
+        clc
+        adc RES
+        sta RES
+        lda M1H
+        adc RESH
+        sta RESH
+mshift: asl M1
+        rol M1H
+        dex
+        bne mloop
+        rts
+; faread: array element read A(expr). Called from fac4 with the letter parked
+; in T1 and y past '('; returns ACC/ACCH = the element and y past ')'.
+faread: lda T1
+        sec
+        sbc #$41         ; k = c-'A'
+        pha              ; park k across the index expr (expr is balanced)
+        iny              ; past '('
+        jsr expr         ; index -> ACC, y past it
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fa_e         ; unwind the k park first, then the shared exit
+        iny              ; past ')'
+        lda ACCH
+        bne fa_bad       ; index >= 256: ERR (drops the k park)
+        lda ACC
+        cmp #11
+        bcs fa_bad       ; index > 10: ERR
+        pla              ; k -> A (the only park on the stack)
+        tax
+        jsr arybase      ; SRC/SRCH = ARY + 22*k; ACC/X/Y preserved
+        tya
+        pha              ; park the parse position (stack held only k)
+        lda ACC
+        asl a
+        tay              ; y = 2*idx
+        lda (SRC),y
+        sta T0
+        iny
+        lda (SRC),y
+        sta ACCH
+        lda T0
+        sta ACC
+        pla              ; parse-pos -> A
+        tay
+        rts
+fa_e:   pla
+        jmp fpar_e       ; drop the park, then the malformed-paren exit
+fa_bad: pla
+        jmp xerr         ; drop the k park, ERR
+
+; arybase: X = k (0..25), SRC/SRCH = ARY + 22*k. 22*k tops out at 550
+; ($226), so the partials live in two 26-byte tables instead of shift
+; arithmetic: the lookup clobbers only A and preserves ACC, X, Y, and
+; every scratch cell — mid-parse safe.
+arybase:
+        lda mult22lo,x
+        clc
+        adc #<ARY
+        sta SRC
+        lda mult22hi,x
+        adc #ARY/$100
+        sta SRCH
+        rts
+mult22lo:
+        .byte $00,$16,$2C,$42,$58,$6E,$84,$9A,$B0,$C6,$DC,$F2
+        .byte $08,$1E,$34,$4A,$60,$76,$8C,$A2,$B8,$CE,$E4,$FA
+        .byte $10,$26
+mult22hi:
+        .byte 0,0,0,0,0,0,0,0,0,0,0,0
+        .byte 1,1,1,1,1,1,1,1,1,1,1,1
+        .byte 1,1
 
 ; --- THEN: line number or inline statement ------------------------------
 ; Reached by jmp from xif with y at THEN's T and the stacked return of
