@@ -99,9 +99,10 @@ to what you want.
 ## BASIC
 
 `software/basic.s` is a tiny interpreter on the terminal: a numbered line is
-stored, a direct command (RUN, LIST, NEW, END, GOTO, IF, PRINT, POKE, PLOT,
-UNPLOT) runs immediately, and each PRINT lands one row on the terminal (the
-ASCII mirror at `$2500` is the headless test contract).
+stored (the input buffer caps at 28 characters, so longer lines truncate
+silently at input), a direct command (RUN, LIST, NEW, END, GOTO, IF, PRINT,
+POKE, PLOT, UNPLOT) runs immediately, and each PRINT lands one row on the
+terminal (the ASCII mirror at `$2500` is the headless test contract).
 
 - Statements: `LET` (numeric var or `var$` = string expr), `PRINT` with a
   `;`-separated list of literals, string vars and numeric items, `IF cond
@@ -146,6 +147,11 @@ ASCII mirror at `$2500` is the headless test contract).
   concats truncate silently; quoted literals, `+` concatenation, mixed `;`
   PRINT lists, `LEN(str-expr)` → 0..7, and IF conditions may compare any
   two string exprs with `= < >`. An unterminated literal is ERR.
+- Arrays: `DIM A(10)` declares array A (letters A–Z) with 11 two-byte
+  elements, indices 0–10, at `$1300 + 22*(letter-'A')`. DIM accepts a comma
+  list, re-DIMming is harmless (values survive), undimensioned reads return
+  0, and a declared size or element index above 10 is ERR. Elements fold
+  like any factor in numeric expressions and work as READ and LET targets.
 - A parse or runtime fault prints ERR and aborts the run; NEW clears the
   program, variables and string slots.
 
