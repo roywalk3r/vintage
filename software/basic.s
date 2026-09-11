@@ -26,7 +26,7 @@ IBUFM  = $2600         ; input-line mirror (33 bytes: prompt + text + pad)
 DBUF   = $2700         ; decimal digit scratch, LSB-first
 TB     = $2740         ; 33-byte compose buffer for PRINT/LIST lines
 STRV   = $1200         ; A$-Z$, 8 bytes each: 7 chars + NUL, NUL-padded
-SSCR   = $5C           ; string build buffer, 8 bytes in zero page
+SSCR   = $6E           ; string build buffer, 8 bytes in zero page
 SLEN   = $64           ; composed string length (0..7)
 SPTR   = $65           ; string-var slot pointer for (zp),y access
 SPTRH  = $66
@@ -37,6 +37,8 @@ RDHI   = $6A           ; otherwise mid-list inside a DATA line's items
 PX      = $6B           ; PLOT x (0..255), y (0..191), mode: 1 set 0 clear
 PLY     = $6C
 XPLOTF  = $6D
+RESEV  = $76           ; xloop: pending mid-slot resume offset ($FF = none);
+                      ; NEXT's iteration and RETURN's resumption both set it
 
 ; --- zero page ---
 IBLEN  = $12           ; input buffer length
@@ -99,8 +101,9 @@ GLYPH = $E6
 GHI    = $E7
 CHIDX = $E8
 PBUF   = $2780        ; input-row compose buffer (33 bytes)
-GSTK   = $2721        ; GOSUB frames: 4 x [ret lo @+0, ret hi @+4, FSP @+8]
-GSP    = $272D        ; live GOSUB depth, 0..4
+GSTK   = $2721        ; GOSUB frames: 4 x [ret lo @+0, ret hi @+4, FSP @+8,
+                      ; cur @+12]; cur = in-slot cursor for RETURN's resume
+GSP    = $2731        ; live GOSUB depth, 0..4
 
 ; --- boot: clear everything, print READY, then the poll loop ------------
 start:  jsr clear_scr
@@ -113,6 +116,8 @@ start:  jsr clear_scr
         sta PROGTOP      ; PROGTOP = $2000 (no lines)
         lda #PROG/$100
         sta PROGEH
+        lda #$FF
+        sta RESEV        ; no mid-slot resume pending at boot
         jsr rready
         jsr rprompt
 
@@ -280,6 +285,8 @@ dgoto_j:
         lda #0
         sta FSP          ; fresh FOR stack for the direct-GOTO run
         jsr rdinit       ; fresh data cursor for the direct-GOTO run
+        lda #$FF
+        sta RESEV        ; fresh mid-slot resume state per run
         jsr xloop
         jmp hcln         ; found: run from the target line, then clear
 dif_d:
@@ -863,6 +870,8 @@ xprint:
         jsr skipsp
         lda (CPTR),y
         beq xp0
+        cmp #':'         ; ':' = the xloop chain separator: bare PRINT and
+        beq xp0          ; leave the ':' for xs_next
         lda #0
         sta TBLEN
 xp1:    jsr pitem
@@ -872,7 +881,9 @@ xp1:    jsr pitem
         bne xp2
         iny
         jmp xp1
-xp2:    lda #0          ; end of list: NUL-terminate and print the row
+xp2:    tya
+        pha             ; park the parse index: the row print clobbers y
+        lda #0          ; end of list: NUL-terminate and print the row
         ldy TBLEN
         sta TB,y
         lda #<TB
@@ -880,14 +891,20 @@ xp2:    lda #0          ; end of list: NUL-terminate and print the row
         lda #TB/$100
         sta MSGHI
         jsr tprint
+        pla
+        tay
         rts
-xp0:    lda #0
+xp0:    tya
+        pha             ; park the parse index: the row print clobbers y
+        lda #0
         sta TB          ; bare PRINT: empty row
         lda #<TB
         sta MSGLO
         lda #TB/$100
         sta MSGHI
         jsr tprint
+        pla
+        tay
         rts
 
 ; pitem: one PRINT item, string or numeric. A string item composes
@@ -991,6 +1008,8 @@ xlstr:  iny             ; past $
         bne xl_e
         iny
         jsr strexpr      ; -> SSCR/SLEN
+        tya
+        pha             ; park the parse index: the string store clobbers y
         lda VIDX
         asl a
         asl a            ; VIDX is already *2: *4 = 8-byte slots
@@ -1012,7 +1031,9 @@ xl1:    cpy SLEN
         sta (SPTR),y
         iny
         bne xl1
-xl2:    rts
+xl2:    pla
+        tay
+        rts
 xl_e:   jmp xerr
 ; --- xgoto: GOTO lineno. y at the G. Repositions CPTR to the target -----
 xgoto:  lda #4
@@ -1194,9 +1215,11 @@ xi_s8:  lda #2
 xf_ej:  jmp xf_e         ; branch trampoline: xfor's checks sit past the
                          ; 6502's -128..+127 relative range from xf_e
 ; --- xfor: FOR var = start TO limit [STEP step]. y at the F -------------
-; Pushes (var, limit, step, ret=CPTR+32) onto the 4-level loop stack; the
-; start value lands in the variable and the body is the slots after this
-; one. NEXT resumes at ret, so the FOR never re-runs.
+; Pushes (var, limit, step, forslot, cur) onto the 4-level loop stack;
+; the start value lands in the variable. cur is the post-FOR cursor: a
+; ':'-chain body in this line, or the line's NUL when the body lives in
+; the slots after this one. NEXT iterates by re-entering the chain at
+; forslot/cur, so both body shapes resume correctly.
 xfor:   lda #3
         jsr ady          ; past FOR
         jsr skipsp
@@ -1269,7 +1292,10 @@ xf_s:   lda #4
         sta T0
         lda ACCH
         sta T1
-xf_rec: jsr xf_base      ; re-derive SRC
+xf_rec: tya
+        sta DST          ; park the post-FOR cursor: the record store
+                         ; below uses y as its index
+        jsr xf_base      ; re-derive SRC
         ldy #3
         lda T0
         sta (SRC),y      ; +3 step lo
@@ -1278,14 +1304,15 @@ xf_rec: jsr xf_base      ; re-derive SRC
         sta (SRC),y      ; +4 step hi
         iny
         lda CPTR
-        clc
-        adc #32
-        sta (SRC),y      ; +5 ret lo = the slot after the FOR
+        sta (SRC),y      ; +5 forslot lo = this slot
         iny
         lda CPTRH
-        adc #0
-        sta (SRC),y      ; +6 ret hi
-        inc FSP
+        sta (SRC),y      ; +6 forslot hi
+        ldy #7
+        lda DST
+        sta (SRC),y      ; +7 cur: the body start (a ':' or the NUL)
+        ldy DST          ; restore the post-FOR cursor: the chain check
+        inc FSP          ; after C=0 reads (CPTR),y to find the ':' or NUL
         clc              ; fall through into the body
         rts
 xf_e:   jmp xerr
@@ -1295,7 +1322,7 @@ xf_base:
         ldx FSP
         cpx #4
         bcs xf_e         ; loop stack full
-        lda mult7,x
+        lda mult8,x
         clc
         adc #<FORST
         sta SRC
@@ -1303,19 +1330,22 @@ xf_base:
         adc #0
         sta SRCH
         rts
-mult7:  .byte 0,7,14,21
+mult8:  .byte 0,8,16,24
 
 ; --- xnext: NEXT [var]. Pops the top loop level, steps the variable,
-; and repositions CPTR to the FOR's successor (C=1) or falls through
-; (C=0) once the limit is passed. y at the N of NEXT ---------------------
+; and resumes the loop by setting RESEV inside the FOR's own slot (C=1),
+; or falls through (C=0) once the limit is passed. y at the N of NEXT ---
 xnext:  lda #4
         jsr ady          ; past NEXT
+        tya
+        sta DST          ; park the post-NEXT cursor: the record loads
+                         ; below use y as their index
         ldx FSP
         bne xn_hf        ; has a FOR level: pop it
         jmp xn_e         ; NEXT without FOR
 xn_hf:  ldx FSP
         dex
-        lda mult7,x      ; index the top level but leave FSP: the pop
+        lda mult8,x      ; index the top level but leave FSP: the pop
                          ; happens on exit only, or the next NEXT of a
                          ; continuing loop finds an empty stack
         clc
@@ -1339,8 +1369,8 @@ xn_hf:  ldx FSP
         ldy #4
         lda (SRC),y
         sta T1H          ; T1 = step
-        ldy #7           ; the record loads left y=4: restore the post-keyword
-        jsr skipsp       ; cursor (ady landed here) before skipping spaces
+        ldy DST          ; the record loads left y=4: restore the post-
+        jsr skipsp       ; NEXT cursor (ady landed there) before skipping
         lda (CPTR),y
         cmp #$41
         bcc xn_add
@@ -1391,7 +1421,11 @@ xn_go:  ldy #5
         sta CPTR
         ldy #6
         lda (SRC),y
-        sta CPTRH        ; resume at the slot after the FOR
+        sta CPTRH        ; CPTR = the FOR's own slot
+        ldy #7
+        lda (SRC),y
+        sta RESEV        ; re-enter the chain at the body start (a ':' or
+                         ; the line's NUL: xs_next consumes either)
         sec
         rts
 xn_exit:
@@ -1421,6 +1455,9 @@ xinput: lda #5
         lda (CPTR),y
         cmp #'$'
         beq xistr_j
+        tya
+        pha             ; park the post-INPUT cursor: the prompt loop and
+                        ; both value stores clobber y
         lda #0
         sta IBLEN
         sta IBUF         ; fresh empty line
@@ -1467,6 +1504,8 @@ xin_d:  lda SINF
         sta VARS,x
         lda ACCH
         sta VARS+1,x
+        pla
+        tay
         rts
 xin_s:  lda VIDX
         asl a
@@ -1493,8 +1532,13 @@ xin1c:  cpy #7
         sta (SPTR),y
         iny
         bne xin1c
-xi3:    rts
-xistr:  lda #1
+xi3:    pla
+        tay
+        rts
+xistr:  tya
+        pha             ; park the post-INPUT cursor: the value store
+                        ; clobbers y
+        lda #1
         sta SINF
         lda #0
         sta IBLEN
@@ -1803,8 +1847,15 @@ dl_dec: dec NUMPROG
         dec PROGEH
 dl_end: rts
 ; --- xloop: run statements from CPTR until PROGTOP, END or ERR ----------
+; After a statement returns C=0, the chain check at xs_next continues
+; in-slot when another statement follows a ':' separator; otherwise the
+; run advances to the next slot. A mid-slot resume (RESEV != $FF) re-
+; enters the chain at the stored cursor: NEXT's iteration and RETURN's
+; resumption both land inside the FOR/GOSUB line.
 xloop:  lda ERRF
         bne xdone
+        lda RESEV
+        bpl xres         ; $FF has bit 7 set: no resume pending
         lda PROGEH
         cmp CPTRH
         bcc xdone
@@ -1815,7 +1866,23 @@ xloop:  lda ERRF
         beq xdone
 xl_r1:  jsr xstmt
         bcs xloop        ; repositioned: re-run the checks at the top
-        lda CPTR
+xs_next:
+        jsr skipsp
+        lda (CPTR),y
+        beq xadv         ; NUL: the line's statements are done
+        cmp #':'         ; ':' = $3A: continue in-slot
+        bne xadv
+        iny
+        jsr skipsp
+        jsr xstmy        ; C=1 repositioned: re-run the top checks
+        bcs xloop
+        jmp xs_next
+xres:   ldy RESEV
+        lda #$FF
+        sta RESEV
+        jmp xs_next      ; CPTR is the FOR/GOSUB slot; y points at the
+                         ; stored body start (a ':' or the line's NUL)
+xadv:   lda CPTR
         clc
         adc #32
         sta CPTR
@@ -1835,6 +1902,8 @@ drun:   lda NUMPROG
         sta FSP          ; a run starts with no live loops and no return
         sta GSP          ; frames (xloop is re-entered per statement, so this
         jsr rdinit       ; frames; data cursor rewinds per run, and per run-start
+        lda #$FF
+        sta RESEV        ; fresh mid-slot resume state per run
         jsr xloop        ; in the direct GOTO/IF run paths too
         jmp hcln
 drun0:  jsr hcln
@@ -1981,77 +2050,6 @@ mshift: asl M1
         bne mloop
         rts
 
-; --- div16: QUO = DVND / M2, REM = remainder; M2 preserved --------------
-div16:  lda #0
-        sta QUO
-        sta QUOH
-        sta REM
-        sta REMH
-        ldx #16
-dloop:  asl DVND
-        rol DVNDH
-        rol REM
-        rol REMH
-        lda REM
-        cmp M2
-        lda REMH
-        sbc M2H
-        bcc dshift0
-        lda REM
-        sbc M2
-        sta REM
-        lda REMH
-        sbc M2H
-        sta REMH
-        sec
-        jmp dshift
-dshift0:
-        clc
-dshift: rol QUO
-        rol QUOH
-        dex
-        bne dloop
-        rts
-
-; --- to_dec: DISPL/H -> decimal digits LSB-first in DBUF, count in DLEN -
-to_dec: lda #0
-        sta DLEN
-tdl:    lda DISPL
-        sta DVND
-        lda DISPH
-        sta DVNDH
-        lda #10
-        sta M2
-        lda #0
-        sta M2H
-        jsr div16
-        lda REM
-        ora #$30       ; remainder is 0-9, make it ASCII
-        ldy DLEN
-        sta DBUF,y
-        iny
-        sty DLEN
-        lda QUO
-        sta DISPL
-        lda QUOH
-        sta DISPH
-        lda QUO
-        ora QUOH
-        bne tdl
-        rts
-; --- static strings ----------------------------------------------------
-readymsg:
-        .text "VINTAGE-1 BASIC"
-        .byte 0
-readymgs2:
-        .text "READY"
-        .byte 0
-errmsg:
-        .text "ERR"
-        .byte 0
-
-stub:   rti
-
         .org $FFFA
         .word stub, start, stub
 .org $F000
@@ -2152,6 +2150,68 @@ FONT:
  .byte $E0,$30,$30,$1C,$30,$30,$E0,$00 ; `$7D`
  .byte $76,$DC,$00,$00,$00,$00,$00,$00 ; `$7E`
 
+; --- div16: QUO = DVND / M2, REM = remainder; M2 preserved --------------
+; Lives past the font ($E000 region is full). Callers are jsr-only
+; (expression divide, nump, xlist) so the address is free to sit
+; anywhere in ROM.
+div16:  lda #0
+        sta QUO
+        sta QUOH
+        sta REM
+        sta REMH
+        ldx #16
+dloop:  asl DVND
+        rol DVNDH
+        rol REM
+        rol REMH
+        lda REM
+        cmp M2
+        lda REMH
+        sbc M2H
+        bcc dshift0
+        lda REM
+        sbc M2
+        sta REM
+        lda REMH
+        sbc M2H
+        sta REMH
+        sec
+        jmp dshift
+dshift0:
+        clc
+dshift: rol QUO
+        rol QUOH
+        dex
+        bne dloop
+        rts
+
+; --- to_dec: DISPL/H -> decimal digits LSB-first in DBUF, count in DLEN -
+to_dec: lda #0
+        sta DLEN
+tdl:    lda DISPL
+        sta DVND
+        lda DISPH
+        sta DVNDH
+        lda #10
+        sta M2
+        lda #0
+        sta M2H
+        jsr div16
+        lda REM
+        ora #$30       ; remainder is 0-9, make it ASCII
+        ldy DLEN
+        sta DBUF,y
+        iny
+        sty DLEN
+        lda QUO
+        sta DISPL
+        lda QUOH
+        sta DISPH
+        lda QUO
+        ora QUOH
+        bne tdl
+        rts
+
 ; --- xend: END terminates the run by parking CPTR at PROGTOP ------------
 xend:   lda PROGTOP
         sta CPTR
@@ -2207,18 +2267,21 @@ xl_9:   rts
 
 ; --- xgosub / xret: GOSUB lineno / RETURN --------------------------------
 ; Lives past the font ($E000 region is full). A frame is [ret lo @+0,
-; ret hi @+4, FSP @+8], 4 levels deep. The FSP snapshot makes RETURN
-; discard FOR levels opened inside the callee while the caller's stay
-; live. The return address is parked on the CPU stack across findline,
-; which re-points CPTR at the found slot — reading CPTR after the call
-; would push the callee's slot instead of the GOSUB's successor.
+; ret hi @+4, FSP @+8, cur @+12], 4 levels deep. The FSP snapshot makes
+; RETURN discard FOR levels opened inside the callee while the caller's
+; stay live; cur re-enters the GOSUB line's ':'-chain on RETURN. The
+; return address is parked on the CPU stack across findline, which re-
+; points CPTR at the found slot — reading CPTR after the call would push
+; the callee's slot instead of the GOSUB's successor.
 xgosub:
         lda #5
         jsr ady          ; past GOSUB
         jsr skipsp
         jsr pnum
-        lda CPTR         ; park CPTR+32 (the return slot) over findline
-        clc
+        tya
+        pha              ; park cur = the post-line-number cursor across
+        lda CPTR         ; findline: slotptr inside it clobbers T1, so the
+        clc              ; CPU stack carries cur (xs_next resumes at it)
         adc #32
         pha
         lda CPTRH
@@ -2228,11 +2291,14 @@ xgosub:
         bcs gs1
         pla              ; no such line: unwind the park, ERR
         pla
-        jmp xerr
-gs1:    pla
-        sta T0H          ; the parked return address
         pla
+        jmp xerr
+gs1:    pla              ; the parked ret (GOSUB slot + 32) and cur — the
+        sta T0H          ; pushes were [cur, ret lo, ret hi], so hi comes
+        pla              ; off the stack first, then lo, then cur
         sta T0
+        pla
+        sta T1
         ldx GSP
         cpx #4
         bcs gs_of        ; deeper than 4: ERR
@@ -2242,6 +2308,8 @@ gs1:    pla
         sta GSTK+4,x
         lda FSP
         sta GSTK+8,x     ; snapshot: RETURN discards the callee's FOR levels
+        lda T1
+        sta GSTK+12,x    ; cur: xs_next resumes here on RETURN
         inc GSP
         sec              ; CPTR already points at the callee (findline set it)
         rts
@@ -2252,12 +2320,17 @@ xret:   ldx GSP
         beq gs_e         ; RETURN without GOSUB: ERR
         dex
         stx GSP
-        lda GSTK,x
-        sta CPTR
-        lda GSTK+4,x
-        sta CPTRH
         lda GSTK+8,x
         sta FSP          ; restore the caller's FOR depth
+        sec
+        lda GSTK,x
+        sbc #32
+        sta CPTR         ; CPTR = ret - 32: the GOSUB's own slot (the parked
+        lda GSTK+4,x     ; ret is that slot + 32), so xs_next's RESEV
+        sbc #0           ; resume reads the caller's line, not the callee's
+        sta CPTRH
+        lda GSTK+12,x
+        sta RESEV        ; resume mid-slot: xs_next continues the line
         sec
         rts
 gs_e:   jsr xerr
@@ -2607,6 +2680,8 @@ xplotf: lda #1
 xunplf: lda #0          ; store with A=1; UNPLOT enters at the lda with A=0
         sta XPLOTF
         jsr plxy        ; parse "x,y" -> PX, PLY
+        tya
+        pha             ; park the parse index: the bit draw clobbers y
         ; bit mask: $80 >> (PX & 7) — the count-0 case can't share the
         ; shift loop (X=0 would run it 256 times), so it gets its own load
         lda PX
@@ -2657,6 +2732,8 @@ xpmk1:  sta T1          ; mask parked while the address is built
         jmp xpsto
 xpset:  ora T1
 xpsto:  sta (SRC),y
+        pla
+        tay
         clc
         rts
 
@@ -2732,3 +2809,19 @@ xth_n:  jsr pnum
         rts
 xth_ok: sec
         rts
+
+; --- far-region data: static strings and the vector stub ----------------
+; Moved past the font ($E000 region is full). All are referenced via
+; absolute immediates (`#<label`) or the vector table, never by
+; fall-through, so their address is free to sit anywhere in ROM.
+
+stub:   rti
+readymsg:
+        .text "VINTAGE-1 BASIC"
+        .byte 0
+readymgs2:
+        .text "READY"
+        .byte 0
+errmsg:
+        .text "ERR"
+        .byte 0

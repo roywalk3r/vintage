@@ -117,6 +117,14 @@ ASCII mirror at `$2500` is the headless test contract).
   1bpp framebuffer at `$4000`: both coords are full expressions, x must land
   0–255 and y 0–191 — anything else is ERR — and the bit lands at
   `SCREEN + y*32 + x/8`, mask `$80 >> (x&7)`), `END`.
+- Chained statements: `:` separates statements within a program line —
+  `10 FOR I=1 TO 3:PRINT I:NEXT I` iterates mid-slot because NEXT resumes
+  inside the FOR's own slot. Handlers whose loops clobber the parse cursor
+  (PRINT, INPUT, string LET, PLOT/UNPLOT) park it on the stack, so the chain
+  check resumes at the first unconsumed character; a trailing `:` is
+  consumed harmlessly. Direct commands run only their first statement, and
+  everything after DATA to end-of-line is data (a `:` there is part of the
+  items).
 - Data pool: `DATA item[,item...]` lines are inert when executed; `READ`
   vars pulls the next literal(s) — numerics through the shared digit-run
   parser (an optional leading `-` negates, values wrap mod 65536), strings

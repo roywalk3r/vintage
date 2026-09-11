@@ -731,3 +731,129 @@ fn basic_plot_program_row() {
     assert_eq!(m.fb()[100 * 32], 0xFF, "PLOT I,100 for I=0..7 fills the byte");
     assert_eq!(term_row(&m, 2), "DONE", "the loop completed without aborting");
 }
+#[test]
+fn basic_colon_print_chain() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT \"A\":PRINT \"B\"\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "A", "the slot's first statement prints");
+    assert_eq!(term_row(&m, 3), "B", "':' resumes at the next statement");
+}
+
+#[test]
+fn basic_colon_for_next_same_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=1TO 3:PRINT I:NEXT\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "1", "body prints before NEXT on the first pass");
+    assert_eq!(term_row(&m, 3), "2");
+    assert_eq!(term_row(&m, 4), "3", "body re-runs mid-slot via the resume vector");
+}
+
+#[test]
+fn basic_colon_loop_exit_continues_chain() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=1TO 2:NEXT:PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "9", "after NEXT exhausts, the ':' chain continues");
+}
+
+#[test]
+fn basic_colon_gosub_mid_slot_resume() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 GOSUB 100:PRINT \"R\"\r");
+    type_keys(&mut m, &mut cpu, b"100 PRINT \"S\"\r");
+    type_keys(&mut m, &mut cpu, b"110 RETURN\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "S", "the subroutine runs first");
+    assert_eq!(term_row(&m, 3), "R", "RETURN resumes at the ':' continuation, not the next slot");
+}
+
+#[test]
+fn basic_colon_then_chain_taken() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=1THEN PRINT7:PRINT8\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "7", "the THEN body runs");
+    assert_eq!(term_row(&m, 3), "8", "the chain after the THEN body runs too");
+}
+
+#[test]
+fn basic_colon_if_untaken_skips_rest() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 IF 1=2THEN PRINT7:PRINT8\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "", "an untaken IF skips the whole slot");
+}
+
+#[test]
+fn basic_colon_goto_repositions_out_of_chain() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT \"A\":GOTO 30\r");
+    type_keys(&mut m, &mut cpu, b"20 PRINT \"B\"\r");
+    type_keys(&mut m, &mut cpu, b"30 PRINT \"C\"\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "A");
+    assert_eq!(term_row(&m, 3), "C", "GOTO repositioned CPTR out of the chain");
+}
+
+#[test]
+fn basic_colon_empty_body_loop_terminates() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=1TO 2:NEXT:PRINT 9\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "9", "an empty loop body terminates instead of hanging");
+}
+
+#[test]
+fn basic_colon_nested_inner_same_line() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 FOR I=1 TO 2\r");
+    type_keys(&mut m, &mut cpu, b"20 FOR J=1TO 2:PRINT J:NEXT\r");
+    type_keys(&mut m, &mut cpu, b"30 NEXT I\r");
+    type_keys(&mut m, &mut cpu, b"40 PRINT \"END\"\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "1", "outer pass 1, inner pass 1");
+    assert_eq!(term_row(&m, 3), "2", "outer pass 1, inner pass 2");
+    assert_eq!(term_row(&m, 4), "1", "outer pass 2 re-runs the slot");
+    assert_eq!(term_row(&m, 5), "2", "outer pass 2, inner pass 2");
+    assert_eq!(term_row(&m, 6), "END", "outer NEXT I exits cleanly from a mid-slot resume");
+}
+
+#[test]
+fn basic_colon_trailing_is_harmless() {
+    let (mut m, mut cpu) = boot();
+    type_keys(&mut m, &mut cpu, b"10 PRINT \"X\":\r");
+    type_keys(&mut m, &mut cpu, b"RUN\r");
+    for _ in 0..6 {
+        m.run_frame(&mut cpu);
+    }
+    assert_eq!(term_row(&m, 2), "X", "trailing ':' is consumed, then the NUL ends the line");
+}
