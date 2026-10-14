@@ -566,10 +566,11 @@ fac1:   cmp #$41
         cmp #'L'
         beq fle_j        ; "LE..." -> LEN (trampoline: flen is far)
 fac3:   cmp #'N'
-        bne fac4
+        bne fac9        ; not "RN...": try the newer keyword pairs
         lda T1
         cmp #'R'
         beq frnd         ; "RN..." -> RND
+fac9:   jmp fnew        ; trampoline: the far new-pair dispatcher
 fac4:   lda (CPTR),y     ; y is past the letter: '(' means an array element
         cmp #'('
         bne fac4v
@@ -3062,6 +3063,184 @@ xelsef5: pla
         jmp xelsef1
 xelse_n:  clc
         rts
+
+; --- fnew: function factors — ABS, SGN, ASC, VAL -------------------------
+; Reached from the numeric factor chain (fac9, E000) via jmp. On entry:
+; T1 = the first letter, y on the 2nd char. Three-letter keywords skip
+; 2 more chars (ady #2) to land on the '(' — PEEK is 4 letters (ady #3).
+fnew:   lda (CPTR),y     ; reload the 2nd char: the dispatcher is immune
+        cmp #'B'         ; to whatever the flag-compare path left in A
+        bne fn1
+        lda T1
+        cmp #'A'
+        beq fabs         ; "AB..." -> ABS
+fn1:    cmp #'S'
+        bne fn2
+        lda T1
+        cmp #'A'
+        beq f_as         ; "AS..." -> ASC (trampoline: fasc is past bne reach)
+fn2:    cmp #'G'
+        bne fn3
+        lda T1
+        cmp #'S'
+        beq fsgn         ; "SG..." -> SGN
+fn3:    cmp #'A'
+        bne fnew_x
+        lda T1
+        cmp #'V'
+        beq f_va         ; "VA..." -> VAL (trampoline: fval is past bne reach)
+fnew_x: jmp fac4         ; no pair matched: back to the plain-variable path
+
+; f_as/f_va: local jmp trampolines — the dispatcher's ABS/SGN beqs reach
+; their handlers, but ASC/VAL sit past one conditional branch's reach.
+f_as:   jmp fasc
+f_va:   jmp fval
+
+; fne: far-side error exit. Conditional branches cannot reach fpar_e
+; (E000) from here, so every far handler branches to this short hop.
+fne:    jmp fpar_e
+
+; farg: shared prologue for the 3-letter function factors. y on the 2nd
+; char: skips the keyword tail (ady #2) and validates the '('.
+farg:   lda #2
+        jsr ady          ; past the keyword, y on the '('
+        jsr skipsp
+        lda (CPTR),y
+        cmp #'('
+        bne fne
+        iny              ; past '('
+        rts
+
+; fabs: ABS(expr) = |two's complement value|
+fabs:   jsr farg
+        jsr expr
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fne
+        iny
+        bit ACCH
+        bpl fa9
+        sec              ; negative: ACC = 0 - ACC
+        lda #0
+        sbc ACC
+        sta T0           ; T0 is dead here (ady/expr both done with it)
+        lda #0
+        sbc ACCH
+        sta ACCH
+        lda T0
+        sta ACC
+fa9:    rts
+
+; fsgn: SGN(expr) = -1 / 0 / 1 by the two's-complement sign
+fsgn:   jsr farg
+        jsr expr
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fne
+        iny
+        bit ACCH
+        bmi fs2
+        lda ACCH
+        ora ACC          ; ACCH bit 7 clear: zero iff both bytes are 0
+        beq fs1
+        lda #1
+        sta ACC
+        lda #0
+        sta ACCH
+        rts
+fs1:    lda #0
+        sta ACC
+        sta ACCH
+        rts
+fs2:    lda #$FF
+        sta ACC
+        sta ACCH         ; -1 = $FFFF
+        rts
+
+; fasc: ASC("string expr") = the first character's code, 0 for ""
+fasc:   jsr farg
+        jsr strexpr
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fne2
+        iny
+        lda SSCR         ; SSCR[0]: the NUL of an empty compose is 0
+        sta ACC
+        lda #0
+        sta ACCH
+        rts
+
+; fne2: two error hops exist in this block — fval sits past fne's reach.
+fne2:   jmp fpar_e
+
+; fval: VAL("string expr") = the leading [-]digits, wrapping mod 65536.
+; The walk is bounded by SLEN: sputc never writes a terminator, so
+; SSCR[SLEN] is stale and only SLEN chars are composed — the walk must
+; not trust a NUL at SSCR[SLEN].
+fval:   jsr farg
+        jsr strexpr
+        jsr skipsp
+        lda (CPTR),y
+        cmp #')'
+        bne fne2
+        iny
+        ldx #0
+        stx ACC
+        stx ACCH
+        lda SSCR         ; a leading '-' shifts the walk one char in
+        cmp #'-'
+        bne fv1
+        inx
+fv1:    cpx SLEN
+        bcs fv9
+        lda SSCR,x
+        cmp #'0'
+        bcc fv9
+        cmp #':'
+        bcs fv9
+        asl ACC
+        rol ACCH         ; 2*ACC
+        lda ACC
+        sta M2
+        lda ACCH
+        sta M2H          ; park 2*ACC in M2 (apply's cell, dead mid-parse)
+        asl ACC
+        rol ACCH         ; 4*ACC
+        asl ACC
+        rol ACCH         ; 8*ACC
+        clc
+        lda ACC
+        adc M2
+        sta ACC
+        lda ACCH
+        adc M2H
+        sta ACCH
+        sec
+        lda SSCR,x
+        sbc #'0'         ; d = char - '0'
+        clc
+        adc ACC
+        sta ACC
+        bcc fv2
+        inc ACCH
+fv2:    inx
+        jmp fv1
+fv9:    lda SSCR
+        cmp #'-'
+        bne fv10
+        sec              ; negate: ACC = 0 - ACC
+        lda #0
+        sbc ACC
+        sta T0
+        lda #0
+        sbc ACCH
+        sta ACCH
+        lda T0
+        sta ACC
+fv10:   rts
 
 
 ; --- far-region data: static strings and the vector stub ----------------

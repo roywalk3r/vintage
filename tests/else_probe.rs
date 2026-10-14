@@ -5,9 +5,9 @@
 //! The BASIC app, headless: boot the ROM, type program lines and direct
 //! commands through the one-key buffer, and assert on the scrolling
 //! terminal's ASCII mirror at $2500 (8 rows x 33 bytes per row). This
-//! suite covers the 26 fixed 11-element arrays: DIM validation, element
-//! reads as expression factors, LET element stores, chained statements,
-//! and direct-mode DIM.
+//! suite covers IF...THEN...ELSE: the untaken IF's quote-aware scan to
+//! the line's standalone ELSE, the ELSE <line> jump and inline statement
+//! forms, and a taken IF never seeing its own ELSE.
 
 use vintage::asm::assemble;
 use vintage::cpu::{Bus, Cpu};
